@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import {
   Copy, Pencil, Trash2, Star, Pin, Check, Wand2, Clock, User, Hash, Share2,
-  Image as ImageIcon, History,
+  History, Sparkles, Loader2,
 } from 'lucide-react'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -22,6 +22,8 @@ import { usePromptStore } from '@/lib/prompt-store'
 import {
   type Prompt, getColorClass, extractVariables, fillVariables, copyToClipboard,
 } from '@/lib/prompt-types'
+import { aiAutoFillVariables } from '@/lib/client/ai'
+import { isAIConfigured } from '@/lib/client/ai'
 import { useToast } from '@/hooks/use-toast'
 import { CategoryIcon } from '@/components/category-icon'
 import { StarRating } from '@/components/star-rating'
@@ -61,12 +63,14 @@ export function PromptDetailSheet({ open, onOpenChange, onEdit, onShare }: Props
   const [values, setValues] = React.useState<Record<string, string>>({})
   const [copied, setCopied] = React.useState(false)
   const [showVersions, setShowVersions] = React.useState(false)
+  const [aiFilling, setAiFilling] = React.useState(false)
 
   React.useEffect(() => {
     if (open) {
       setMode('view')
       setValues({})
       setCopied(false)
+      setAiFilling(false)
     }
   }, [open, prompt?.id])
 
@@ -96,6 +100,51 @@ export function PromptDetailSheet({ open, onOpenChange, onEdit, onShare }: Props
       toast({ title: '提示词已删除' })
       selectPrompt(null)
       onOpenChange(false)
+    }
+  }
+
+  // AI 自动填充变量
+  const handleAiAutoFill = async () => {
+    if (!isAIConfigured()) {
+      toast({
+        title: '请先配置 AI API Key',
+        description: '设置 → AI API 配置',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (variables.length === 0) {
+      toast({ title: '该提示词没有变量需要填充' })
+      return
+    }
+    setAiFilling(true)
+    try {
+      // 确保在 use 模式下
+      if (mode !== 'use') setMode('use')
+      const result = await aiAutoFillVariables(
+        prompt.title,
+        prompt.content,
+        prompt.description,
+        variables,
+      )
+      if (Object.keys(result).length === 0) {
+        toast({ title: 'AI 未能生成填充内容', variant: 'destructive' })
+      } else {
+        setValues(result)
+        const filled = Object.keys(result).length
+        toast({
+          title: 'AI 已自动填充',
+          description: `${filled}/${variables.length} 个变量已填入推荐值，可手动调整`,
+        })
+      }
+    } catch (e) {
+      toast({
+        title: 'AI 填充失败',
+        description: (e as Error).message,
+        variant: 'destructive',
+      })
+    } finally {
+      setAiFilling(false)
     }
   }
 
@@ -156,6 +205,21 @@ export function PromptDetailSheet({ open, onOpenChange, onEdit, onShare }: Props
         {/* Action bar */}
         <div className="px-6 py-3 border-b bg-muted/30">
           <div className="flex flex-wrap items-center gap-2">
+            {/* AI 自动填充变量 - 醒目主色按钮 */}
+            <Button
+              size="sm"
+              onClick={handleAiAutoFill}
+              disabled={aiFilling || variables.length === 0}
+              className="gap-1.5 bg-violet-500 hover:bg-violet-600 text-white"
+              title={variables.length === 0 ? '该提示词没有变量' : 'AI 推断变量取值'}
+            >
+              {aiFilling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {aiFilling ? 'AI 填充中...' : 'AI 自动填充'}
+            </Button>
             <Button
               size="sm"
               variant={mode === 'use' ? 'default' : 'outline'}
@@ -285,43 +349,7 @@ export function PromptDetailSheet({ open, onOpenChange, onEdit, onShare }: Props
             </div>
           )}
 
-          {/* Background preview */}
-          {prompt.background && (
-            <div className="mb-4 space-y-2">
-              <h4 className="text-sm font-medium flex items-center gap-1.5">
-                <ImageIcon className="h-4 w-4 text-violet-500" />
-                背景设置
-              </h4>
-              <div className="rounded-lg border overflow-hidden">
-                <div
-                  className="h-32 w-full flex items-center justify-center"
-                  style={
-                    prompt.background.type === 'color'
-                      ? { backgroundColor: prompt.background.value }
-                      : {
-                          backgroundImage: `url(${prompt.background.value})`,
-                          backgroundSize: 'cover',
-                          backgroundPosition: 'center',
-                        }
-                  }
-                >
-                  <span
-                    className={cn(
-                      'text-xs font-medium px-2.5 py-1 rounded',
-                      prompt.background.type === 'color' && isLightColor(prompt.background.value)
-                        ? 'bg-black/10 text-black'
-                        : 'bg-white/15 text-white',
-                    )}
-                  >
-                    {prompt.background.type === 'color'
-                      ? (prompt.background.name || prompt.background.value)
-                      : (prompt.background.name || '自定义图片')}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
+          {/* 提示词内容（默认显示完整内容） */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">

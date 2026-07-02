@@ -1113,16 +1113,15 @@ function PromptCardMobile({
                   <path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
                 </svg>
               </button>
-              {/* 展开后显示详情按钮 */}
-              {expanded && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onClick() }}
-                  className="p-1.5 rounded-md hover:bg-muted touch-feedback text-primary"
-                  aria-label="查看详情"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                </button>
-              )}
+              {/* 查看详情按钮（始终显示） */}
+              <button
+                onClick={(e) => { e.stopPropagation(); onClick() }}
+                className="p-1.5 rounded-md hover:bg-muted touch-feedback text-primary"
+                aria-label="查看详情"
+                title="查看详情（含 AI 自动填充变量）"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
             </div>
           )}
         </div>

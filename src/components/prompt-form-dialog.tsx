@@ -14,13 +14,12 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { X, Plus, Sparkles, Wand2, Image as ImageIcon } from 'lucide-react'
+import { X, Plus, Sparkles, Wand2 } from 'lucide-react'
 import { usePromptStore } from '@/lib/prompt-store'
-import type { Prompt, Background } from '@/lib/prompt-types'
+import type { Prompt } from '@/lib/prompt-types'
 import { extractVariables } from '@/lib/prompt-types'
 import { useToast } from '@/hooks/use-toast'
 import { CategoryIcon, ICON_NAMES } from '@/components/category-icon'
-import { BackgroundSelector } from '@/components/background-selector'
 import { cn } from '@/lib/utils'
 
 type PrefillData = {
@@ -55,7 +54,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
   const [collectionId, setCollectionId] = React.useState<string>('none')
   const [tagsInput, setTagsInput] = React.useState('')
   const [tags, setTags] = React.useState<string[]>([])
-  const [background, setBackground] = React.useState<Background | null>(null)
   const [author, setAuthor] = React.useState('匿名')
   const [isPinned, setIsPinned] = React.useState(false)
   const [isFavorite, setIsFavorite] = React.useState(false)
@@ -116,7 +114,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
       setCollectionId(effectiveEdit.collectionId || 'none')
       setTags(effectiveEdit.tags || [])
       setTagsInput('')
-      setBackground(effectiveEdit.background || null)
       setAuthor(effectiveEdit.author || '匿名')
       setIsPinned(effectiveEdit.isPinned)
       setIsFavorite(effectiveEdit.isFavorite)
@@ -128,7 +125,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
       setCollectionId('none')
       setTags(effectivePrefill.tags || [])
       setTagsInput('')
-      setBackground(null)
       setAuthor(effectivePrefill.author || '匿名')
       setIsPinned(false)
       setIsFavorite(false)
@@ -141,7 +137,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
       setCollectionId('none')
       setTags([])
       setTagsInput('')
-      setBackground(null)
       setAuthor('匿名')
       setIsPinned(false)
       setIsFavorite(false)
@@ -201,7 +196,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
       categoryId: categoryId === 'none' ? null : categoryId,
       collectionId: collectionId === 'none' ? null : collectionId,
       tags,
-      background,
       author: author.trim() || '匿名',
       isPinned,
       isFavorite,
@@ -524,22 +518,6 @@ export function PromptFormDialog({ open, onOpenChange, editing, editPrompt, pref
               </Select>
             </div>
           )}
-
-          {/* Background */}
-          <div className="space-y-2">
-            <Label className="flex items-center gap-1.5">
-              <ImageIcon className="h-3.5 w-3.5" />
-              背景选择
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              选择提示词关联的背景（颜色或图片），适用于 AI 模特、商品拍摄等场景
-            </p>
-            <BackgroundSelector
-              value={background}
-              onChange={setBackground}
-              aiContext={{ title, content, description }}
-            />
-          </div>
 
           {/* Toggles */}
           <div className="grid grid-cols-2 gap-4">

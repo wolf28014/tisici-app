@@ -348,3 +348,62 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
     return []
   }
 }
+
+// ============================================
+// AI 自动填充变量
+// 根据提示词内容和变量名，AI 推断每个变量的合理取值
+// ============================================
+export type AutoFillResult = Record<string, string>
+
+export async function aiAutoFillVariables(
+  promptTitle: string,
+  promptContent: string,
+  promptDescription: string | null | undefined,
+  variables: string[],
+): Promise<AutoFillResult> {
+  if (variables.length === 0) return {}
+
+  const system = `你是一位 Prompt 工程师。给定一个提示词模板和其中的变量列表，请根据上下文为每个变量推断一个合理、具体、可直接使用的取值。
+只能输出 JSON 对象，不要任何解释。
+JSON 结构：{"变量名": "推荐取值"}
+
+要求：
+- 取值要具体、可直接使用（不要"请输入..."这种占位文字）
+- 取值要符合该变量在提示词中的语义（结合上下文判断）
+- 取值长度适中（通常 5-30 字）
+- 不要 invent 与提示词无关的内容`
+
+  const user = `提示词标题：${promptTitle}
+提示词描述：${promptDescription || '（无）'}
+提示词内容：
+${promptContent}
+
+需要填充的变量：
+${variables.map(v => `- {{${v}}}`).join('\n')}
+
+请为每个变量推荐一个合理的取值。`
+
+  const raw = await callAI(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    { temperature: 0.7, jsonMode: true, maxTokens: 1500 },
+  )
+
+  const jsonStr = extractJSON(raw)
+  if (!jsonStr) return {}
+  try {
+    const result = JSON.parse(jsonStr) as AutoFillResult
+    // 只保留请求的变量
+    const filtered: AutoFillResult = {}
+    for (const v of variables) {
+      if (result[v] && typeof result[v] === 'string') {
+        filtered[v] = result[v]
+      }
+    }
+    return filtered
+  } catch {
+    return {}
+  }
+}
