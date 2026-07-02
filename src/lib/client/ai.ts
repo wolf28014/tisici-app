@@ -303,3 +303,48 @@ function extractJSON(text: string): string | null {
   if (end <= start) return null
   return trimmed.slice(start, end + 1)
 }
+
+// ============================================
+// AI 热门提示词搜索（生成当月热门提示词）
+// ============================================
+export type HotPrompt = GeneratedPrompt
+
+export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]> {
+  const system = `你是一位顶级 Prompt 工程师，熟悉当下（${new Date().getFullYear()}年${new Date().getMonth() + 1}月）AI 社区最热门的提示词趋势。
+你只能输出 JSON 数组，不要任何解释或 markdown 代码块。
+数组结构（共 10 条）：
+[
+  {
+    "title": "标题（≤20字，吸睛）",
+    "description": "一句话描述（≤40字）",
+    "content": "完整提示词正文，使用 {{变量}} 占位符。结构化排版。",
+    "tags": ["3-5个标签"],
+    "suggestedCategory": "从：写作创作/编程开发/学习辅导/生活日常/工作效率/电商运营/AI模特商拍/AI短剧制作/其他 中选一个"
+  }
+]
+要求：
+- 涵盖当下最热的 AI 应用场景（如 ChatGPT、Claude、Midjourney、Sora、AI 编程、AI 短视频等）
+- 内容要有实用价值，不能是空话
+- 直接输出 JSON 数组，不要包裹在对象里`
+
+  const user = category
+    ? `请生成 10 条当前最热门的 ${category} 相关提示词。`
+    : `请生成 10 条当前 AI 社区最热门、最受欢迎的提示词，覆盖多个领域。`
+
+  const raw = await callAI(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    { temperature: 0.9, jsonMode: true, maxTokens: 4000 },
+  )
+
+  const jsonStr = extractJSON(raw)
+  if (!jsonStr) return []
+  try {
+    const arr = JSON.parse(jsonStr) as HotPrompt[]
+    return Array.isArray(arr) ? arr.slice(0, 10) : []
+  } catch {
+    return []
+  }
+}

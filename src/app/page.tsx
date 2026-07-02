@@ -22,6 +22,7 @@ import {
   Tag as TagIcon, Settings, FolderOpen, Cloud, Wand2, Palette, Sun, Moon,
   Library, Home, Folder, BarChart3, Menu, X, Check, ChevronRight,
   Package, Trash2, Eye, RefreshCw, ExternalLink, Monitor,
+  Flame, User as UserIcon, LogIn,
 } from 'lucide-react'
 import { PromptFormDialog } from '@/components/prompt-form-dialog'
 import { PromptDetailSheet } from '@/components/prompt-detail-sheet'
@@ -33,9 +34,13 @@ import { CloudSyncDialog } from '@/components/cloud-sync-dialog'
 import { AIGenerateDialog } from '@/components/ai-generate-dialog'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { UpdateDialog, useAutoCheckUpdate } from '@/components/update-dialog'
+import { ThemeSwitcher } from '@/components/theme-switcher'
+import { AuthDialog } from '@/components/auth-dialog'
 import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
 import { getAIConfig, setAIConfig, isAIConfigured, type AIConfig } from '@/lib/client/ai'
 import { checkForUpdate, APP_VERSION, GITHUB_REPO, type UpdateInfo } from '@/lib/client/updater'
+import { fetchHotPrompts, autoFetchHotIfNeeded } from '@/lib/client/hot-prompts'
+import { getCurrentUser, isLoggedIn, maskEmail } from '@/lib/client/auth'
 import { cn } from '@/lib/utils'
 import { useTheme } from 'next-themes'
 
@@ -79,10 +84,19 @@ export default function HomePage() {
   const updateCheck = useAutoCheckUpdate()
   const [manualChecking, setManualChecking] = React.useState(false)
 
+  // 主题切换器、账号对话框
+  const [themeOpen, setThemeOpen] = React.useState(false)
+  const [authOpen, setAuthOpen] = React.useState(false)
+  const [authed, setAuthed] = React.useState(false)
+  const [fetchingHot, setFetchingHot] = React.useState(false)
+
   // 初始化数据库
   React.useEffect(() => {
     initialize()
-  }, [initialize])
+    setAuthed(isLoggedIn())
+    // 启动时静默拉取热门提示词（24h 内只拉一次）
+    autoFetchHotIfNeeded().then(() => refreshAll())
+  }, [initialize, refreshAll])
 
   // 切换筛选条件时重新拉取（必须在任何条件 return 之前调用 hooks）
   React.useEffect(() => {
@@ -176,6 +190,26 @@ export default function HomePage() {
       }
     } finally {
       setManualChecking(false)
+    }
+  }
+
+  // 拉取 AI 热门提示词
+  const handleFetchHot = async () => {
+    if (!isAIConfigured()) {
+      toast({ title: '请先配置 AI API Key', description: '设置 → AI API 配置', variant: 'destructive' })
+      return
+    }
+    setFetchingHot(true)
+    try {
+      const result = await fetchHotPrompts(true)
+      if (result.success) {
+        await refreshAll()
+        toast({ title: '热门提示词已更新', description: result.message })
+      } else {
+        toast({ title: '拉取失败', description: result.message, variant: 'destructive' })
+      }
+    } finally {
+      setFetchingHot(false)
     }
   }
 
@@ -279,9 +313,16 @@ export default function HomePage() {
 
         {/* 底部操作 */}
         <div className="p-3 border-t border-border space-y-1">
+          <PcNavItem icon={Flame} label="AI 热门搜索" onClick={handleFetchHot} />
           <PcNavItem icon={Wand2} label="AI 生成提示词" onClick={() => setAiGenerateOpen(true)} />
           <PcNavItem icon={Cloud} label="跨设备同步" onClick={() => setSyncOpen(true)} />
           <PcNavItem icon={Download} label="导入 / 导出" onClick={() => setImportExportOpen(true)} />
+          <PcNavItem icon={Palette} label="切换主题" onClick={() => setThemeOpen(true)} />
+          <PcNavItem
+            icon={authed ? UserIcon : LogIn}
+            label={authed ? (getCurrentUser()?.email || '账号') : '登录 / 注册'}
+            onClick={() => setAuthOpen(true)}
+          />
           <div className="flex items-center justify-between px-2 pt-2 mt-1 border-t border-border/50">
             <ThemeToggle />
             <button
@@ -458,6 +499,10 @@ export default function HomePage() {
               onManageCollections={() => setCollectionOpen(true)}
               onCheckUpdate={handleCheckUpdate}
               manualChecking={manualChecking}
+              onThemeOpen={() => setThemeOpen(true)}
+              onAuthOpen={() => setAuthOpen(true)}
+              onFetchHot={handleFetchHot}
+              fetchingHot={fetchingHot}
             />
           )}
         </div>
@@ -582,6 +627,12 @@ export default function HomePage() {
         open={updateCheck.open}
         onOpenChange={updateCheck.setOpen}
         updateInfo={updateCheck.updateInfo}
+      />
+      <ThemeSwitcher open={themeOpen} onOpenChange={setThemeOpen} />
+      <AuthDialog
+        open={authOpen}
+        onOpenChange={setAuthOpen}
+        onUserChange={() => setAuthed(isLoggedIn())}
       />
     </div>
   )
@@ -883,6 +934,7 @@ function PromptCardMobile({
   onEdit: () => void
   onShare: () => void
 }) {
+  const [expanded, setExpanded] = React.useState(false)
   // 找到分类（直接从 prompt.categoryId 在 store 中查找）
   const categories = usePromptStore(s => s.categories)
   const category = React.useMemo(() => {
@@ -901,14 +953,26 @@ function PromptCardMobile({
 
   const color = getColorClass(category?.color)
 
+  const handleCardClick = () => {
+    if (selectionMode) {
+      onToggleSelect()
+    } else if (expanded) {
+      // 已展开时点击标题区折叠
+      setExpanded(false)
+    } else {
+      // 折叠时点击展开（不打开详情抽屉）
+      setExpanded(true)
+    }
+  }
+
   return (
     <div
       className={cn(
-        'relative rounded-xl border bg-card p-4 touch-feedback prompt-card-pc',
-        selected ? 'border-violet-500 ring-2 ring-violet-500/30' : 'border-border',
+        'relative rounded-xl border bg-card p-4 touch-feedback prompt-card-pc transition-all',
+        selected ? 'border-violet-500 ring-2 ring-violet-500/30' : 'border-border hover:border-primary/30',
         prompt.isPinned && 'ring-1 ring-amber-400/40',
+        expanded && 'shadow-md',
       )}
-      onClick={selectionMode ? onToggleSelect : onClick}
     >
       {/* 背景色（如有） */}
       {prompt.background && prompt.background.type === 'color' && (
@@ -919,36 +983,68 @@ function PromptCardMobile({
       )}
 
       <div className="relative">
-        {/* 标题行 */}
-        <div className="flex items-start gap-2 mb-1.5">
+        {/* 标题行（点击折叠/展开） */}
+        <div
+          className="flex items-start gap-2 mb-1.5 cursor-pointer"
+          onClick={handleCardClick}
+        >
           {selectionMode && (
             <div className={cn(
-              'mt-1 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0',
+              'mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0',
               selected ? 'bg-violet-500 border-violet-500' : 'border-muted-foreground/30',
             )}>
               {selected && <Check className="w-3 h-3 text-white" />}
             </div>
           )}
-          <h3 className="flex-1 font-semibold text-sm leading-snug text-fade-2">
+          {/* 分类色条 */}
+          {category && (
+            <div className={cn('mt-1.5 w-1 h-4 rounded-full shrink-0', color.dot)} />
+          )}
+          <h3 className={cn(
+            'flex-1 font-bold leading-tight transition-colors',
+            'text-[15px] lg:text-base',
+            'text-foreground hover:text-primary',
+          )}>
             {prompt.title}
           </h3>
           {prompt.isPinned && (
-            <Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
+            <Pin className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0 mt-0.5" />
           )}
           {prompt.isFavorite && (
-            <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500 shrink-0" />
+            <Star className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0 mt-0.5" />
+          )}
+          {!selectionMode && (
+            <ChevronRight className={cn(
+              'w-4 h-4 text-muted-foreground shrink-0 mt-1 transition-transform',
+              expanded && 'rotate-90',
+            )} />
           )}
         </div>
 
-        {/* 描述 */}
+        {/* 描述（醒目柔和） */}
         {prompt.description && (
-          <p className="text-xs text-muted-foreground mb-2 text-fade-2">{prompt.description}</p>
+          <p
+            className="text-[13px] text-muted-foreground mb-2 leading-relaxed cursor-pointer"
+            onClick={handleCardClick}
+          >
+            {prompt.description}
+          </p>
         )}
 
-        {/* 内容预览 */}
-        <p className="text-xs text-muted-foreground/80 mb-3 text-fade-3 font-mono leading-relaxed">
-          {prompt.content}
-        </p>
+        {/* 内容（默认折叠，点击展开后显示） */}
+        {expanded && !selectionMode && (
+          <div className="mb-3 mt-2 p-3 rounded-lg bg-muted/40 border border-border/50">
+            <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed max-h-80 overflow-y-auto">
+              {prompt.content}
+            </pre>
+            {/* 变量提示 */}
+            {prompt.content.includes('{{') && (
+              <div className="mt-2 text-[10px] text-muted-foreground">
+                {'💡 含 {{变量}} 占位符，点击详情可填充'}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 标签 + 元数据 */}
         <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -1017,6 +1113,16 @@ function PromptCardMobile({
                   <path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
                 </svg>
               </button>
+              {/* 展开后显示详情按钮 */}
+              {expanded && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onClick() }}
+                  className="p-1.5 rounded-md hover:bg-muted touch-feedback text-primary"
+                  aria-label="查看详情"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1292,12 +1398,17 @@ function StatCard({
 // ============================================
 function SettingsTab({
   onImportExport, onSync, onManageCollections, onCheckUpdate, manualChecking,
+  onThemeOpen, onAuthOpen, onFetchHot, fetchingHot,
 }: {
   onImportExport: () => void
   onSync: () => void
   onManageCollections: () => void
   onCheckUpdate?: () => void
   manualChecking?: boolean
+  onThemeOpen?: () => void
+  onAuthOpen?: () => void
+  onFetchHot?: () => void
+  fetchingHot?: boolean
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
@@ -1327,7 +1438,39 @@ function SettingsTab({
             </button>
           }
         />
+        {onThemeOpen && (
+          <SettingsRow
+            icon={Palette}
+            title="切换主题（10 套）"
+            subtitle="墨黑/樱花/薄荷/夕阳/深海/薰衣草/咖啡/雪白/丛林/玫瑰"
+            onClick={onThemeOpen}
+          />
+        )}
       </SettingsSection>
+
+      {/* 账号 */}
+      {onAuthOpen && (
+        <SettingsSection title="账号">
+          <SettingsRow
+            icon={UserIcon}
+            title={isLoggedIn() ? (getCurrentUser()?.email || '已登录') : '登录 / 注册'}
+            subtitle={isLoggedIn() ? '点击查看账号信息或登出' : '邮箱+密码，可跨设备同步数据'}
+            onClick={onAuthOpen}
+          />
+        </SettingsSection>
+      )}
+
+      {/* AI 热门 */}
+      {onFetchHot && (
+        <SettingsSection title="AI 热门">
+          <SettingsRow
+            icon={Flame}
+            title="AI 自动搜索热门提示词"
+            subtitle={fetchingHot ? '正在搜索...' : '生成 10 条当月热门，存入"热门推荐"分类'}
+            onClick={onFetchHot}
+          />
+        </SettingsSection>
+      )}
 
       {/* AI 配置 */}
       <AIConfigSection />
