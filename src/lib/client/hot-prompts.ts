@@ -96,28 +96,16 @@ export type FetchProgress = {
 
 // 拉取热门提示词
 // onProgress: 进度回调，让 UI 能实时反馈
+// 注意：不再清空旧数据，每次搜索都是追加保存
 export async function fetchHotPrompts(
   force = false,
   onProgress?: (p: FetchProgress) => void,
 ): Promise<HotFetchResult> {
+  // 检查缓存（仅用于显示"上次拉取时间"，不再阻止重新拉取）
   const cache = getCache()
-  if (!force && cache && Date.now() - cache.lastFetch < 24 * 60 * 60 * 1000) {
-    const all = await queryPrompts({})
-    const cached = all.filter(p => cache.promptIds.includes(p.id))
-    if (cached.length > 0) {
-      return {
-        success: true,
-        count: cached.length,
-        message: '使用缓存（24h 内已拉取）',
-        prompts: cached,
-      }
-    }
-  }
 
   try {
-    onProgress?.({ stage: 'starting', message: '开始拉取热门提示词...' })
-    onProgress?.({ stage: 'cleaning', message: '清理旧的热门提示词...' })
-    await clearOldHotPrompts()
+    onProgress?.({ stage: 'starting', message: '开始拉取热门提示词（不清空已有数据）...' })
 
     onProgress?.({ stage: 'calling_ai', message: '正在调用 AI 生成 50 条热门提示词（约 15-30 秒）...' })
     const generated = await aiSearchHotPrompts()
@@ -168,8 +156,10 @@ export async function fetchHotPrompts(
       }
     }
 
-    setCache({ lastFetch: Date.now(), promptIds: newIds })
-    onProgress?.({ stage: 'done', message: `完成！共 ${newIds.length} 条` })
+    // 更新缓存（追加新 ID，不删除旧的）
+    const oldIds = cache?.promptIds || []
+    setCache({ lastFetch: Date.now(), promptIds: [...oldIds, ...newIds] })
+    onProgress?.({ stage: 'done', message: `完成！本次新增 ${newIds.length} 条` })
 
     return {
       success: true,
@@ -188,7 +178,8 @@ export async function fetchHotPrompts(
   }
 }
 
-// 启动时自动拉取（静默，无进度反馈）
+// 启动时自动拉取（仅当从未拉取过时才自动拉取，避免每次启动都生成导致数据膨胀）
+// 用户可随时手动点击"AI 热门搜索"追加新数据，已保存的不会删除
 export async function autoFetchHotIfNeeded(): Promise<void> {
   try {
     const { isAIConfigured } = await import('./ai')
@@ -196,8 +187,13 @@ export async function autoFetchHotIfNeeded(): Promise<void> {
   } catch {
     return
   }
+  // 检查是否已有热门数据，如果有就不再自动拉取（避免每次启动重复生成）
+  const all = await queryPrompts({})
+  const hasHot = all.some(p => p.author === 'AI 热门')
+  if (hasHot) return
+  // 没有热门数据时，静默拉取一次
   try {
-    await fetchHotPrompts(true)
+    await fetchHotPrompts(false)
   } catch (e) {
     console.warn('autoFetchHot failed:', e)
   }

@@ -43,7 +43,7 @@ export function isAIConfigured(): boolean {
 }
 
 // ============================================
-// 调用 AI 对话
+// 调用 AI 对话（带容错：jsonMode 失败时自动重试不带该参数）
 // ============================================
 async function callAI(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
@@ -55,32 +55,53 @@ async function callAI(
   }
 
   const url = `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
-  const body: Record<string, unknown> = {
-    model: cfg.model,
-    messages,
-    temperature: options?.temperature ?? 0.7,
-    max_tokens: options?.maxTokens ?? 4096,
+
+  const tryCall = async (useJsonMode: boolean): Promise<string> => {
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      messages,
+      temperature: options?.temperature ?? 0.7,
+      max_tokens: options?.maxTokens ?? 4096,
+    }
+    if (useJsonMode && options?.jsonMode) {
+      body.response_format = { type: 'json_object' }
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(`AI 调用失败 (${res.status}): ${errText.slice(0, 200)}`)
+    }
+
+    const data = await res.json()
+    return data?.choices?.[0]?.message?.content || ''
   }
+
+  // 如果需要 jsonMode，先尝试带 response_format
+  // 某些端点（如 Agnes）可能不支持，失败后自动去掉重试
   if (options?.jsonMode) {
-    body.response_format = { type: 'json_object' }
+    try {
+      return await tryCall(true)
+    } catch (e) {
+      const errMsg = (e as Error).message
+      // 400/422 错误通常是不支持 response_format
+      if (errMsg.includes('400') || errMsg.includes('422') || errMsg.includes('response_format') || errMsg.includes('unsupported')) {
+        console.warn('AI 不支持 response_format，去掉该参数重试')
+        return await tryCall(false)
+      }
+      throw e
+    }
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`AI 调用失败 (${res.status}): ${errText.slice(0, 200)}`)
-  }
-
-  const data = await res.json()
-  return data?.choices?.[0]?.message?.content || ''
+  return await tryCall(false)
 }
 
 // ============================================

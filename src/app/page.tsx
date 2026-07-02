@@ -213,8 +213,8 @@ export default function HomePage() {
       if (result.success) {
         await refreshAll()
         toast({
-          title: `✅ 热门提示词已更新`,
-          description: result.message,
+          title: `✅ 新增 ${result.count} 条热门提示词`,
+          description: `已按分类追加保存，不会覆盖已有数据`,
         })
       } else {
         toast({ title: '拉取失败', description: result.message, variant: 'destructive' })
