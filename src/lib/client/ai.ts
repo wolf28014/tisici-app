@@ -317,7 +317,7 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
   {
     "title": "标题（≤20字，吸睛）",
     "description": "一句话描述（≤40字）",
-    "content": "完整提示词正文，使用 {{变量}} 占位符。结构化排版。",
+    "content": "完整提示词正文。**不要使用 {{变量}} 占位符**，直接写出可直接复制粘贴使用的完整内容。如果需要场景化，就给出一个具体的场景示例。",
     "tags": ["3-5个标签"],
     "suggestedCategory": "从：写作创作/编程开发/学习辅导/生活日常/工作效率/电商运营/AI模特商拍/AI短剧制作/其他 中选一个"
   }
@@ -326,11 +326,12 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
 - 涵盖当下最热的 AI 应用场景（如 ChatGPT、Claude、Midjourney、Sora、AI 编程、AI 短视频等）
 - 内容要有实用价值，不能是空话
 - 必须 50 条，每条内容不同，覆盖多个领域
+- **content 字段绝对不能包含 {{}} 占位符**，必须是用户复制后可直接发给 AI 的完整提示词
 - 直接输出 JSON 数组，不要包裹在对象里`
 
   const user = category
-    ? `请生成 50 条当前最热门的 ${category} 相关提示词。`
-    : `请生成 50 条当前 AI 社区最热门、最受欢迎的提示词，覆盖写作、编程、学习、生活、工作、电商、AI 模特、AI 短剧等多个领域。每条提示词必须有实际使用价值，包含 {{变量}} 占位符。`
+    ? `请生成 50 条当前最热门的 ${category} 相关提示词。每条 content 必须是可直接使用的完整提示词，不含 {{变量}}。`
+    : `请生成 50 条当前 AI 社区最热门、最受欢迎的提示词，覆盖写作、编程、学习、生活、工作、电商、AI 模特、AI 短剧等多个领域。每条 content 必须是可直接复制使用的完整提示词，不含 {{变量}} 占位符。`
 
   const raw = await callAI(
     [
@@ -347,6 +348,127 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
     return Array.isArray(arr) ? arr.slice(0, 50) : []
   } catch {
     return []
+  }
+}
+
+// ============================================
+// AI 搜索提示词（按关键词）
+// 返回 30 条：最常用 10 + 最热门 10 + 最高评价 10
+// ============================================
+export type SearchedPrompt = GeneratedPrompt & {
+  searchType?: '常用' | '热门' | '高评价'
+}
+
+export async function aiSearchPromptsByKeyword(keyword: string): Promise<SearchedPrompt[]> {
+  if (!keyword.trim()) return []
+
+  const system = `你是一位 Prompt 搜索引擎，能从全网（GitHub、PromptHero、PromptBase、Reddit r/ChatGPT、各种 AI 社区）搜索并整理与关键词相关的提示词。
+你只能输出 JSON 数组，不要任何解释或 markdown 代码块。
+
+数组结构（共 30 条，分为 3 类各 10 条）：
+[
+  {
+    "title": "标题（≤20字）",
+    "description": "一句话描述（≤40字）",
+    "content": "完整提示词正文，**不要使用 {{变量}} 占位符**，必须是用户复制后可直接发给 AI 的完整内容。",
+    "tags": ["3-5个标签"],
+    "suggestedCategory": "从：写作创作/编程开发/学习辅导/生活日常/工作效率/电商运营/AI模特商拍/AI短剧制作/其他 中选一个",
+    "searchType": "常用" | "热门" | "高评价"
+  }
+]
+
+【30 条分布】
+- 1-10 条：searchType = "常用"，覆盖该关键词最常用的基础场景
+- 11-20 条：searchType = "热门"，近期 AI 社区讨论度高的进阶用法
+- 21-30 条：searchType = "高评价"，用户反馈最好、效果最佳的精品提示词
+
+【要求】
+- 30 条内容必须各不相同，不能简单重复
+- content 字段绝对不能包含 {{}} 占位符
+- 内容要贴合关键词，有实际使用价值
+- 直接输出 JSON 数组`
+
+  const user = `请搜索并整理与「${keyword}」相关的 30 条提示词。
+分 3 类各 10 条：
+1. 最常用 10 条（基础场景，新手必备）
+2. 最热门 10 条（近期讨论度高，进阶用法）
+3. 最高评价 10 条（精品，效果最佳）
+
+请输出 JSON 数组。`
+
+  const raw = await callAI(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    { temperature: 0.8, jsonMode: true, maxTokens: 12000 },
+  )
+
+  const jsonStr = extractJSON(raw)
+  if (!jsonStr) return []
+  try {
+    const arr = JSON.parse(jsonStr) as SearchedPrompt[]
+    return Array.isArray(arr) ? arr.slice(0, 30) : []
+  } catch {
+    return []
+  }
+}
+
+// ============================================
+// AI 去除变量（重写为完整可直接使用的提示词）
+// ============================================
+export async function aiRemoveVariables(
+  title: string,
+  content: string,
+  description?: string | null,
+): Promise<{ title: string; content: string; description: string }> {
+  const system = `你是一位 Prompt 重写助手。给定一个含 {{变量}} 占位符的提示词，请把它重写为**不含任何变量、可直接复制使用**的完整提示词。
+
+【重写规则】
+1. 把所有 {{变量}} 替换为具体的、合理的默认值（结合提示词语境）
+2. 例如 {{主题}} → "职场成长"；{{目标人群}} → "25-35岁白领"；{{产品}} → "智能手表"
+3. 保留原提示词的结构、语气、要求点
+4. 输出**纯 JSON 对象**，不要任何解释
+
+【输出格式】
+{"title": "新标题（如原标题含变量则一并替换）", "content": "完整提示词正文（无变量）", "description": "一句话描述"}`
+
+  const user = `请重写以下提示词，去除所有 {{变量}} 占位符：
+
+【原标题】${title}
+【原描述】${description || '（无）'}
+【原内容】
+${content}`
+
+  const raw = await callAI(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    { temperature: 0.6, jsonMode: true, maxTokens: 2000 },
+  )
+
+  const jsonStr = extractJSON(raw)
+  if (!jsonStr) {
+    // fallback: 简单正则替换
+    return {
+      title: title.replace(/\{\{[^}]+\}\}/g, '示例'),
+      content: content.replace(/\{\{([^}]+)\}\}/g, (_, name) => {
+        const n = name.trim().split(/[：:]/)[0]
+        return n
+      }),
+      description: description || '',
+    }
+  }
+  try {
+    const result = JSON.parse(jsonStr) as { title: string; content: string; description: string }
+    return {
+      title: result.title || title,
+      content: result.content || content,
+      description: result.description || description || '',
+    }
+  } catch {
+    return { title, content, description: description || '' }
   }
 }
 

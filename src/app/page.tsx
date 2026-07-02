@@ -22,7 +22,7 @@ import {
   Tag as TagIcon, Settings, FolderOpen, Cloud, Wand2, Palette, Sun, Moon,
   Library, Home, Folder, BarChart3, Menu, X, Check, ChevronRight,
   Package, Trash2, Eye, RefreshCw, ExternalLink, Monitor,
-  Flame, User as UserIcon, LogIn,
+  Flame, User as UserIcon, LogIn, Search as SearchIcon, Wand,
 } from 'lucide-react'
 import { PromptFormDialog } from '@/components/prompt-form-dialog'
 import { PromptDetailSheet } from '@/components/prompt-detail-sheet'
@@ -36,10 +36,11 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { UpdateDialog, useAutoCheckUpdate } from '@/components/update-dialog'
 import { ThemeSwitcher } from '@/components/theme-switcher'
 import { AuthDialog } from '@/components/auth-dialog'
+import { AISearchDialog } from '@/components/ai-search-dialog'
 import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
 import { getAIConfig, setAIConfig, isAIConfigured, type AIConfig } from '@/lib/client/ai'
 import { checkForUpdate, APP_VERSION, GITHUB_REPO, type UpdateInfo } from '@/lib/client/updater'
-import { fetchHotPrompts, autoFetchHotIfNeeded } from '@/lib/client/hot-prompts'
+import { fetchHotPrompts, autoFetchHotIfNeeded, removeAllVariablesFromExisting, type FetchProgress } from '@/lib/client/hot-prompts'
 import { getCurrentUser, isLoggedIn, maskEmail } from '@/lib/client/auth'
 import { cn } from '@/lib/utils'
 import { useTheme } from 'next-themes'
@@ -89,6 +90,10 @@ export default function HomePage() {
   const [authOpen, setAuthOpen] = React.useState(false)
   const [authed, setAuthed] = React.useState(false)
   const [fetchingHot, setFetchingHot] = React.useState(false)
+  const [hotProgress, setHotProgress] = React.useState<FetchProgress | null>(null)
+  const [aiSearchOpen, setAiSearchOpen] = React.useState(false)
+  const [removingVars, setRemovingVars] = React.useState(false)
+  const [removeVarsProgress, setRemoveVarsProgress] = React.useState<{ current: number; total: number; title: string } | null>(null)
 
   // 初始化数据库
   React.useEffect(() => {
@@ -193,23 +198,57 @@ export default function HomePage() {
     }
   }
 
-  // 拉取 AI 热门提示词
+  // 拉取 AI 热门提示词（带进度反馈）
   const handleFetchHot = async () => {
     if (!isAIConfigured()) {
       toast({ title: '请先配置 AI API Key', description: '设置 → AI API 配置', variant: 'destructive' })
       return
     }
     setFetchingHot(true)
+    setHotProgress({ stage: 'starting', message: '开始拉取...' })
     try {
-      const result = await fetchHotPrompts(true)
+      const result = await fetchHotPrompts(true, (p) => {
+        setHotProgress(p)
+      })
       if (result.success) {
         await refreshAll()
-        toast({ title: '热门提示词已更新', description: result.message })
+        toast({
+          title: `✅ 热门提示词已更新`,
+          description: result.message,
+        })
       } else {
         toast({ title: '拉取失败', description: result.message, variant: 'destructive' })
       }
+    } catch (e) {
+      toast({ title: '拉取失败', description: (e as Error).message, variant: 'destructive' })
     } finally {
       setFetchingHot(false)
+      setTimeout(() => setHotProgress(null), 2000)
+    }
+  }
+
+  // 批量去除已存在提示词中的变量
+  const handleRemoveVariables = async () => {
+    if (!isAIConfigured()) {
+      toast({ title: '请先配置 AI API Key', description: '设置 → AI API 配置', variant: 'destructive' })
+      return
+    }
+    if (!confirm('将自动重写所有含 {{变量}} 的提示词为完整版本（每条约 2-3 秒）。继续？')) return
+    setRemovingVars(true)
+    try {
+      const result = await removeAllVariablesFromExisting((p) => {
+        setRemoveVarsProgress({ current: p.current, total: p.total, title: p.currentTitle })
+      })
+      await refreshAll()
+      toast({
+        title: '✅ 重写完成',
+        description: `共处理 ${result.processed} 条，成功 ${result.success} 条，失败 ${result.failed} 条`,
+      })
+    } catch (e) {
+      toast({ title: '重写失败', description: (e as Error).message, variant: 'destructive' })
+    } finally {
+      setRemovingVars(false)
+      setRemoveVarsProgress(null)
     }
   }
 
@@ -313,7 +352,40 @@ export default function HomePage() {
 
         {/* 底部操作 */}
         <div className="p-3 border-t border-border space-y-1">
-          <PcNavItem icon={Flame} label="AI 热门搜索" onClick={handleFetchHot} />
+          {/* AI 热门进度提示 */}
+          {hotProgress && (
+            <div className="px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 text-xs text-violet-700 dark:text-violet-300 mb-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                {hotProgress.stage === 'done' ? (
+                  <Check className="w-3 h-3" />
+                ) : (
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                )}
+                <span className="font-medium">{hotProgress.stage === 'done' ? '完成' : 'AI 热门搜索中'}</span>
+              </div>
+              <div className="text-[10px] opacity-80">{hotProgress.message}</div>
+            </div>
+          )}
+          {/* 去变量进度 */}
+          {removeVarsProgress && (
+            <div className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-xs text-emerald-700 dark:text-emerald-300 mb-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span className="font-medium">重写变量中 {removeVarsProgress.current}/{removeVarsProgress.total}</span>
+              </div>
+              <div className="text-[10px] opacity-80 truncate">{removeVarsProgress.title}</div>
+            </div>
+          )}
+          <PcNavItem
+            icon={SearchIcon}
+            label="AI 搜索提示词"
+            onClick={() => setAiSearchOpen(true)}
+          />
+          <PcNavItem
+            icon={Flame}
+            label={fetchingHot ? '热门搜索中...' : 'AI 热门搜索'}
+            onClick={handleFetchHot}
+          />
           <PcNavItem icon={Wand2} label="AI 生成提示词" onClick={() => setAiGenerateOpen(true)} />
           <PcNavItem icon={Cloud} label="跨设备同步" onClick={() => setSyncOpen(true)} />
           <PcNavItem icon={Download} label="导入 / 导出" onClick={() => setImportExportOpen(true)} />
@@ -503,6 +575,9 @@ export default function HomePage() {
               onAuthOpen={() => setAuthOpen(true)}
               onFetchHot={handleFetchHot}
               fetchingHot={fetchingHot}
+              onAISearchOpen={() => setAiSearchOpen(true)}
+              onRemoveVariables={handleRemoveVariables}
+              removingVars={removingVars}
             />
           )}
         </div>
@@ -566,6 +641,14 @@ export default function HomePage() {
             onAIGenerate={() => {
               setFilterOpen(false)
               setAiGenerateOpen(true)
+            }}
+            onAISearch={() => {
+              setFilterOpen(false)
+              setAiSearchOpen(true)
+            }}
+            onFetchHot={() => {
+              setFilterOpen(false)
+              handleFetchHot()
             }}
             onImportExport={() => {
               setFilterOpen(false)
@@ -634,6 +717,7 @@ export default function HomePage() {
         onOpenChange={setAuthOpen}
         onUserChange={() => setAuthed(isLoggedIn())}
       />
+      <AISearchDialog open={aiSearchOpen} onOpenChange={setAiSearchOpen} />
     </div>
   )
 }
@@ -1398,6 +1482,7 @@ function StatCard({
 function SettingsTab({
   onImportExport, onSync, onManageCollections, onCheckUpdate, manualChecking,
   onThemeOpen, onAuthOpen, onFetchHot, fetchingHot,
+  onAISearchOpen, onRemoveVariables, removingVars,
 }: {
   onImportExport: () => void
   onSync: () => void
@@ -1408,6 +1493,9 @@ function SettingsTab({
   onAuthOpen?: () => void
   onFetchHot?: () => void
   fetchingHot?: boolean
+  onAISearchOpen?: () => void
+  onRemoveVariables?: () => void
+  removingVars?: boolean
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
@@ -1459,15 +1547,31 @@ function SettingsTab({
         </SettingsSection>
       )}
 
-      {/* AI 热门 */}
+      {/* AI 搜索 */}
       {onFetchHot && (
-        <SettingsSection title="AI 热门">
+        <SettingsSection title="AI 搜索">
+          {onAISearchOpen && (
+            <SettingsRow
+              icon={SearchIcon}
+              title="AI 按关键词搜索提示词"
+              subtitle="输入关键词（如 codex），返回常用10/热门10/高评价10 共 30 条"
+              onClick={onAISearchOpen}
+            />
+          )}
           <SettingsRow
             icon={Flame}
             title="AI 自动搜索热门提示词"
-            subtitle={fetchingHot ? '正在搜索...' : '生成 10 条当月热门，存入"热门推荐"分类'}
+            subtitle={fetchingHot ? '正在搜索 50 条热门...' : '生成 50 条当月热门，按分类自动保存'}
             onClick={onFetchHot}
           />
+          {onRemoveVariables && (
+            <SettingsRow
+              icon={Wand}
+              title="一键去除所有变量"
+              subtitle={removingVars ? '正在重写...' : '把已存在的 {{变量}} 提示词重写为完整版'}
+              onClick={onRemoveVariables}
+            />
+          )}
         </SettingsSection>
       )}
 
@@ -1642,10 +1746,12 @@ function AIConfigSection() {
 // 筛选抽屉内容
 // ============================================
 function FilterDrawerContent({
-  onClose, onAIGenerate, onImportExport, onSync, onBatchMode, onManageCollections, onShowFavorites, showFavoritesOnly,
+  onClose, onAIGenerate, onAISearch, onFetchHot, onImportExport, onSync, onBatchMode, onManageCollections, onShowFavorites, showFavoritesOnly,
 }: {
   onClose: () => void
   onAIGenerate: () => void
+  onAISearch?: () => void
+  onFetchHot?: () => void
   onImportExport: () => void
   onSync: () => void
   onBatchMode: () => void
@@ -1656,6 +1762,12 @@ function FilterDrawerContent({
   const aiConfigured = isAIConfigured()
   return (
     <div className="p-2">
+      {onAISearch && (
+        <DrawerItem icon={SearchIcon} label="AI 搜索提示词" subtitle={aiConfigured ? '按关键词搜 30 条' : '需先配置 AI API'} onClick={onAISearch} />
+      )}
+      {onFetchHot && (
+        <DrawerItem icon={Flame} label="AI 热门搜索" subtitle={aiConfigured ? '50 条当月热门' : '需先配置 AI API'} onClick={onFetchHot} />
+      )}
       <DrawerItem icon={Wand2} label="AI 生成提示词" subtitle={aiConfigured ? '用 AI 帮你写提示词' : '需先配置 AI API'} onClick={onAIGenerate} />
       <DrawerItem icon={Star} label="我的收藏" subtitle={showFavoritesOnly ? '正在显示' : '查看收藏的提示词'} onClick={onShowFavorites} />
       <DrawerItem icon={Check} label="批量编辑模式" subtitle="多选后批量加标签/删除" onClick={onBatchMode} />
