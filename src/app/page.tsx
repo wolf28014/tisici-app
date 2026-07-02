@@ -562,7 +562,11 @@ export default function HomePage() {
       />
       <ImportExportDialog open={importExportOpen} onOpenChange={setImportExportOpen} />
       <ShareDialog open={shareOpen} onOpenChange={setShareOpen} prompt={sharingPrompt} />
-      <BatchEditDialog open={batchOpen} onOpenChange={setBatchOpen} />
+      <BatchEditDialog
+        open={batchOpen}
+        onOpenChange={setBatchOpen}
+        selectedIds={Array.from(selectedIds)}
+      />
       <CollectionManagerDialog open={collectionOpen} onOpenChange={setCollectionOpen} />
       <CloudSyncDialog open={syncOpen} onOpenChange={setSyncOpen} />
       <AIGenerateDialog
