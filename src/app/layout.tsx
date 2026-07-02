@@ -3,6 +3,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { PageBackgroundApplier } from "@/components/page-background-applier";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export const metadata: Metadata = {
   title: "提示词库 · PromptHub",
@@ -36,9 +37,11 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <PageBackgroundApplier />
-          {children}
-          <Toaster />
+          <ErrorBoundary>
+            <PageBackgroundApplier />
+            {children}
+            <Toaster />
+          </ErrorBoundary>
         </ThemeProvider>
       </body>
     </html>
