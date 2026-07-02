@@ -21,7 +21,7 @@ import {
   Sparkles, Search, Plus, Pin, Clock, TrendingUp, Star, Download, Upload,
   Tag as TagIcon, Settings, FolderOpen, Cloud, Wand2, Palette, Sun, Moon,
   Library, Home, Folder, BarChart3, Menu, X, Check, ChevronRight,
-  Package, Trash2, Eye,
+  Package, Trash2, Eye, RefreshCw, ExternalLink, Monitor,
 } from 'lucide-react'
 import { PromptFormDialog } from '@/components/prompt-form-dialog'
 import { PromptDetailSheet } from '@/components/prompt-detail-sheet'
@@ -32,13 +32,17 @@ import { CollectionManagerDialog } from '@/components/collection-manager-dialog'
 import { CloudSyncDialog } from '@/components/cloud-sync-dialog'
 import { AIGenerateDialog } from '@/components/ai-generate-dialog'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { UpdateDialog, useAutoCheckUpdate } from '@/components/update-dialog'
 import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
 import { getAIConfig, setAIConfig, isAIConfigured, type AIConfig } from '@/lib/client/ai'
+import { checkForUpdate, APP_VERSION, GITHUB_REPO, type UpdateInfo } from '@/lib/client/updater'
 import { cn } from '@/lib/utils'
 import { useTheme } from 'next-themes'
 
 // ============================================
-// 主页：移动端布局
+// 主页：PC + 移动响应式布局
+// - PC (≥1024px)：左侧固定 sidebar + 主内容区
+// - 移动端：底部 Tab + 抽屉筛选
 // ============================================
 type TabKey = 'home' | 'categories' | 'collections' | 'stats' | 'settings'
 
@@ -70,6 +74,10 @@ export default function HomePage() {
   const [collectionOpen, setCollectionOpen] = React.useState(false)
   const [syncOpen, setSyncOpen] = React.useState(false)
   const [aiGenerateOpen, setAiGenerateOpen] = React.useState(false)
+
+  // 应用更新检查
+  const updateCheck = useAutoCheckUpdate()
+  const [manualChecking, setManualChecking] = React.useState(false)
 
   // 初始化数据库
   React.useEffect(() => {
@@ -128,6 +136,27 @@ export default function HomePage() {
     }
   }
 
+  // 手动检查更新
+  const handleCheckUpdate = async () => {
+    setManualChecking(true)
+    try {
+      const info = await checkForUpdate(true)
+      if (!info) {
+        toast({ title: '检查失败', description: '网络错误，请稍后重试', variant: 'destructive' })
+      } else if (info.hasUpdate) {
+        updateCheck.setUpdateInfo(info)
+        updateCheck.setOpen(true)
+      } else {
+        toast({
+          title: '已是最新版本',
+          description: `当前 v${info.currentVersion} · 最新 v${info.latestVersion}`,
+        })
+      }
+    } finally {
+      setManualChecking(false)
+    }
+  }
+
   const activeCategoryName = React.useMemo(() => {
     const find = (cats: typeof categories): string | null => {
       for (const c of cats) {
@@ -151,8 +180,123 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* ===== 顶部栏 ===== */}
-      <header className="safe-top sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border">
+      {/* ===== PC 端左侧 Sidebar ===== */}
+      <aside className="pc-only fixed left-0 top-0 bottom-0 w-[260px] flex-col border-r border-border bg-card/50 backdrop-blur-md z-40">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-bold text-base leading-tight">PromptHub</div>
+            <div className="text-[10px] text-muted-foreground">提示词库 v{APP_VERSION}</div>
+          </div>
+        </div>
+        <nav className="flex-1 overflow-y-auto pc-sidebar-scroll p-3 space-y-1">
+          {/* 导航项 */}
+          <PcNavItem icon={Home} label="全部提示词" active={activeTab === 'home' && !hasActiveFilter} onClick={() => {
+            setActiveCategoryId(null); setActiveCollectionId(null); setActiveTag(null); setShowFavoritesOnly(false); setActiveTab('home')
+          }} />
+          <PcNavItem icon={Star} label="我的收藏" active={showFavoritesOnly} onClick={() => {
+            setShowFavoritesOnly(!showFavoritesOnly); setActiveTab('home')
+          }} />
+          <PcNavItem icon={BarChart3} label="统计" active={activeTab === 'stats'} onClick={() => setActiveTab('stats')} />
+          <PcNavItem icon={Settings} label="设置" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+
+          {/* 分类列表 */}
+          <div className="pt-3 mt-3 border-t border-border">
+            <div className="flex items-center justify-between px-2 mb-1">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">分类</span>
+              <button className="text-[10px] text-violet-500 hover:underline" onClick={() => setActiveTab('categories')}>
+                全部
+              </button>
+            </div>
+            <PcCategoryItem
+              name="全部"
+              icon={Home}
+              active={!activeCategoryId}
+              onClick={() => { setActiveCategoryId(null); setActiveTab('home') }}
+            />
+            {categories.slice(0, 8).map(c => (
+              <PcCategoryItem
+                key={c.id}
+                name={c.name}
+                icon={Library}
+                color={c.color}
+                count={c.promptCount}
+                active={activeCategoryId === c.id}
+                onClick={() => { setActiveCategoryId(c.id); setActiveTab('home') }}
+              />
+            ))}
+          </div>
+
+          {/* 收藏夹列表 */}
+          {collections.length > 0 && (
+            <div className="pt-3 mt-3 border-t border-border">
+              <div className="flex items-center justify-between px-2 mb-1">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">收藏夹</span>
+                <button className="text-[10px] text-violet-500 hover:underline" onClick={() => setActiveTab('collections')}>
+                  管理
+                </button>
+              </div>
+              {collections.map(c => (
+                <PcCategoryItem
+                  key={c.id}
+                  name={c.name}
+                  icon={FolderOpen}
+                  color={c.color}
+                  count={c.promptCount}
+                  active={activeCollectionId === c.id}
+                  onClick={() => { setActiveCollectionId(c.id); setActiveTab('home') }}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 标签云 */}
+          {tags.length > 0 && (
+            <div className="pt-3 mt-3 border-t border-border">
+              <div className="px-2 mb-2">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">标签</span>
+              </div>
+              <div className="flex flex-wrap gap-1 px-1">
+                {tags.slice(0, 12).map(t => (
+                  <button
+                    key={t.name}
+                    onClick={() => { setActiveTag(t.name); setActiveTab('home') }}
+                    className={cn(
+                      'px-2 py-0.5 rounded-full text-[10px] touch-feedback',
+                      activeTag === t.name ? 'bg-violet-500 text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                    )}
+                  >
+                    #{t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </nav>
+
+        {/* 底部操作 */}
+        <div className="p-3 border-t border-border space-y-1">
+          <PcNavItem icon={Wand2} label="AI 生成提示词" onClick={() => setAiGenerateOpen(true)} />
+          <PcNavItem icon={Cloud} label="跨设备同步" onClick={() => setSyncOpen(true)} />
+          <PcNavItem icon={Download} label="导入 / 导出" onClick={() => setImportExportOpen(true)} />
+          <div className="flex items-center justify-between px-2 pt-2 mt-1 border-t border-border/50">
+            <ThemeToggle />
+            <button
+              onClick={handleCheckUpdate}
+              disabled={manualChecking}
+              className="text-[10px] text-muted-foreground hover:text-violet-500 flex items-center gap-1 touch-feedback"
+            >
+              <RefreshCw className={cn('w-3 h-3', manualChecking && 'animate-spin')} />
+              {manualChecking ? '检查中...' : `v${APP_VERSION}`}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ===== 移动端顶部栏 ===== */}
+      <header className="mobile-only safe-top sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border">
         <div className="flex items-center gap-2 px-4 py-3">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white">
@@ -201,97 +345,136 @@ export default function HomePage() {
         )}
       </header>
 
+      {/* ===== PC 端顶部栏（搜索 + 操作） ===== */}
+      <header className="pc-only safe-top sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border h-16 items-center px-6 gap-4">
+        <div className="flex-1 max-w-2xl relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="搜索提示词标题、内容、作者..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-9 h-10 rounded-full bg-muted/50 border-0"
+          />
+          {searchQuery && (
+            <button
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setAiGenerateOpen(true)} className="hidden lg:flex">
+            <Wand2 className="w-4 h-4 mr-1" />AI 生成
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="hidden lg:flex">
+            <Check className="w-4 h-4 mr-1" />批量
+          </Button>
+          <Button size="sm" onClick={handleNewPrompt} className="bg-violet-500 hover:bg-violet-600">
+            <Plus className="w-4 h-4 mr-1" />新建
+          </Button>
+        </div>
+      </header>
+
       {/* ===== 主内容 ===== */}
-      <main className="flex-1 overflow-y-auto pb-24">
-        {activeTab === 'home' && (
-          <HomeTab
-            prompts={prompts}
-            loading={loading}
-            error={error}
-            selectionMode={selectionMode}
-            selectedIds={selectedIds}
-            onToggleSelect={(id) => usePromptStore.getState().toggleSelected(id)}
-            onCardClick={(p) => {
-              if (selectionMode) {
-                usePromptStore.getState().toggleSelected(p.id)
-              } else {
-                selectPrompt(p)
-                setDetailOpen(true)
-              }
-            }}
-            onCopy={handleCopyPrompt}
-            onEdit={handleEdit}
-            onShare={handleShare}
-            sortBy={sortBy}
-            onSortChange={setSortBy}
-            hasFilter={!!hasActiveFilter}
-            onClearFilter={() => {
-              setActiveCategoryId(null)
-              setActiveCollectionId(null)
-              setActiveTag(null)
-              setShowFavoritesOnly(false)
-            }}
-            onBatchEdit={() => setBatchOpen(true)}
-            onExitSelectionMode={() => {
-              setSelectionMode(false)
-              clearSelection()
-            }}
-            onSelectAll={selectAll}
-          />
-        )}
+      <main className="flex-1 overflow-y-auto pb-24 lg:pb-6 pc-main-with-sidebar">
+        <div className="lg:max-w-6xl lg:mx-auto lg:px-6 lg:py-6">
+          {activeTab === 'home' && (
+            <HomeTab
+              prompts={prompts}
+              loading={loading}
+              error={error}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              onToggleSelect={(id) => usePromptStore.getState().toggleSelected(id)}
+              onCardClick={(p) => {
+                if (selectionMode) {
+                  usePromptStore.getState().toggleSelected(p.id)
+                } else {
+                  selectPrompt(p)
+                  setDetailOpen(true)
+                }
+              }}
+              onCopy={handleCopyPrompt}
+              onEdit={handleEdit}
+              onShare={handleShare}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              hasFilter={!!hasActiveFilter}
+              onClearFilter={() => {
+                setActiveCategoryId(null)
+                setActiveCollectionId(null)
+                setActiveTag(null)
+                setShowFavoritesOnly(false)
+              }}
+              onBatchEdit={() => setBatchOpen(true)}
+              onExitSelectionMode={() => {
+                setSelectionMode(false)
+                clearSelection()
+              }}
+              onSelectAll={selectAll}
+              activeCategoryName={activeCategoryName}
+              activeCollectionName={activeCollectionName}
+              activeTag={activeTag}
+            />
+          )}
 
-        {activeTab === 'categories' && (
-          <CategoriesTab
-            categories={categories}
-            tags={tags}
-            activeCategoryId={activeCategoryId}
-            activeTag={activeTag}
-            onSelectCategory={(id) => {
-              setActiveCategoryId(id)
-              setActiveTab('home')
-            }}
-            onSelectTag={(t) => {
-              setActiveTag(t)
-              setActiveTab('home')
-            }}
-          />
-        )}
+          {activeTab === 'categories' && (
+            <CategoriesTab
+              categories={categories}
+              tags={tags}
+              activeCategoryId={activeCategoryId}
+              activeTag={activeTag}
+              onSelectCategory={(id) => {
+                setActiveCategoryId(id)
+                setActiveTab('home')
+              }}
+              onSelectTag={(t) => {
+                setActiveTag(t)
+                setActiveTab('home')
+              }}
+            />
+          )}
 
-        {activeTab === 'collections' && (
-          <CollectionsTab
-            collections={collections}
-            onSelectCollection={(id) => {
-              setActiveCollectionId(id)
-              setActiveTab('home')
-            }}
-            onManage={() => setCollectionOpen(true)}
-          />
-        )}
+          {activeTab === 'collections' && (
+            <CollectionsTab
+              collections={collections}
+              onSelectCollection={(id) => {
+                setActiveCollectionId(id)
+                setActiveTab('home')
+              }}
+              onManage={() => setCollectionOpen(true)}
+            />
+          )}
 
-        {activeTab === 'stats' && <StatsTab />}
+          {activeTab === 'stats' && <StatsTab />}
 
-        {activeTab === 'settings' && (
-          <SettingsTab
-            onImportExport={() => setImportExportOpen(true)}
-            onSync={() => setSyncOpen(true)}
-            onManageCollections={() => setCollectionOpen(true)}
-          />
-        )}
+          {activeTab === 'settings' && (
+            <SettingsTab
+              onImportExport={() => setImportExportOpen(true)}
+              onSync={() => setSyncOpen(true)}
+              onManageCollections={() => setCollectionOpen(true)}
+              onCheckUpdate={handleCheckUpdate}
+              manualChecking={manualChecking}
+            />
+          )}
+        </div>
       </main>
 
-      {/* ===== 悬浮新建按钮 ===== */}
+      {/* ===== 悬浮新建按钮（移动端） ===== */}
       {activeTab === 'home' && !selectionMode && (
         <button
           onClick={handleNewPrompt}
-          className="fixed right-4 bottom-24 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-500/30 flex items-center justify-center touch-feedback"
+          className="mobile-only fixed right-4 bottom-24 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-500/30 flex items-center justify-center touch-feedback"
           aria-label="新建提示词"
         >
           <Plus className="w-6 h-6" />
         </button>
       )}
 
-      {/* ===== 底部 Tab Bar ===== */}
-      <nav className="safe-bottom fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-md border-t border-border">
+      {/* ===== 底部 Tab Bar（仅移动端） ===== */}
+      <nav className="mobile-only safe-bottom fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-md border-t border-border">
         <div className="flex items-center justify-around px-2 py-1">
           <TabButton
             icon={Home}
@@ -326,7 +509,7 @@ export default function HomePage() {
         </div>
       </nav>
 
-      {/* ===== 侧边筛选抽屉 ===== */}
+      {/* ===== 侧边筛选抽屉（仅移动端） ===== */}
       <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
         <SheetContent side="right" className="w-[85vw] max-w-sm p-0">
           <SheetHeader className="p-4 border-b">
@@ -387,11 +570,72 @@ export default function HomePage() {
         onApply={(data) => {
           setEditing(null)
           setFormOpen(true)
-          // 通过 sessionStorage 把数据传给表单
           sessionStorage.setItem('prompthub_prefill', JSON.stringify(data))
         }}
       />
+      <UpdateDialog
+        open={updateCheck.open}
+        onOpenChange={updateCheck.setOpen}
+        updateInfo={updateCheck.updateInfo}
+      />
     </div>
+  )
+}
+
+// ============================================
+// PC 端 Sidebar 导航项
+// ============================================
+function PcNavItem({
+  icon: Icon, label, active, onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  active?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm touch-feedback text-left',
+        active
+          ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 font-medium'
+          : 'text-foreground hover:bg-muted/50',
+      )}
+    >
+      <Icon className="w-4 h-4 shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+    </button>
+  )
+}
+
+function PcCategoryItem({
+  name, icon: Icon, color, count, active, onClick,
+}: {
+  name: string
+  icon: React.ComponentType<{ className?: string }>
+  color?: string | null
+  count?: number
+  active?: boolean
+  onClick?: () => void
+}) {
+  const colorClass = getColorClass(color)
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] touch-feedback text-left',
+        active ? 'bg-violet-50 dark:bg-violet-950/30 font-medium' : 'hover:bg-muted/50',
+      )}
+    >
+      <div className={cn('w-5 h-5 rounded flex items-center justify-center shrink-0', colorClass.soft)}>
+        <Icon className={cn('w-3 h-3', colorClass.text)} />
+      </div>
+      <span className="flex-1 truncate">{name}</span>
+      {count !== undefined && count > 0 && (
+        <span className="text-[10px] text-muted-foreground">{count}</span>
+      )}
+    </button>
   )
 }
 
@@ -431,6 +675,7 @@ function HomeTab({
   onToggleSelect, onCardClick, onCopy, onEdit, onShare,
   sortBy, onSortChange, hasFilter, onClearFilter,
   onBatchEdit, onExitSelectionMode, onSelectAll,
+  activeCategoryName, activeCollectionName, activeTag,
 }: {
   prompts: Prompt[]
   loading: boolean
@@ -449,6 +694,9 @@ function HomeTab({
   onBatchEdit: () => void
   onExitSelectionMode: () => void
   onSelectAll: () => void
+  activeCategoryName?: string | null
+  activeCollectionName?: string | null
+  activeTag?: string | null
 }) {
   const sortOptions: Array<{ value: any; label: string; icon: any }> = [
     { value: 'pinned', label: '置顶优先', icon: Pin },
@@ -456,6 +704,8 @@ function HomeTab({
     { value: 'usage', label: '使用最多', icon: TrendingUp },
     { value: 'rating', label: '评分最高', icon: Star },
   ]
+
+  const currentTitle = activeCategoryName || activeCollectionName || (activeTag ? `#${activeTag}` : '全部提示词')
 
   if (selectionMode) {
     return (
@@ -497,9 +747,17 @@ function HomeTab({
   }
 
   return (
-    <div className="px-4 py-3">
+    <div className="px-4 py-3 lg:px-0 lg:py-0">
+      {/* PC 端标题 */}
+      <div className="hidden lg:flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-bold">{currentTitle}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{prompts.length} 条提示词</p>
+        </div>
+      </div>
+
       {/* 排序与筛选 */}
-      <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar">
+      <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar lg:mb-4">
         {sortOptions.map(opt => (
           <button
             key={opt.value}
@@ -508,7 +766,7 @@ function HomeTab({
               'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap touch-feedback',
               sortBy === opt.value
                 ? 'bg-violet-500 text-white'
-                : 'bg-muted text-muted-foreground',
+                : 'bg-muted text-muted-foreground hover:bg-muted/70',
             )}
           >
             <opt.icon className="w-3 h-3" />
@@ -562,9 +820,9 @@ function PromptGrid({
 }) {
   if (loading && prompts.length === 0) {
     return (
-      <div className="space-y-3">
-        {[1,2,3].map(i => (
-          <Skeleton key={i} className="h-28 w-full rounded-xl" />
+      <div className="grid pc-grid-2 lg:pc-grid-3 gap-3">
+        {[1,2,3,4,5,6].map(i => (
+          <Skeleton key={i} className="h-32 w-full rounded-xl" />
         ))}
       </div>
     )
@@ -587,7 +845,7 @@ function PromptGrid({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="grid pc-grid-2 lg:pc-grid-3 gap-3">
       {prompts.map(p => (
         <PromptCardMobile
           key={p.id}
@@ -641,7 +899,7 @@ function PromptCardMobile({
   return (
     <div
       className={cn(
-        'relative rounded-xl border bg-card p-4 touch-feedback',
+        'relative rounded-xl border bg-card p-4 touch-feedback prompt-card-pc',
         selected ? 'border-violet-500 ring-2 ring-violet-500/30' : 'border-border',
         prompt.isPinned && 'ring-1 ring-amber-400/40',
       )}
@@ -777,9 +1035,9 @@ function CategoriesTab({
   onSelectTag: (t: string) => void
 }) {
   return (
-    <div className="px-4 py-3 space-y-4">
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-3xl">
       <div>
-        <h2 className="text-sm font-bold mb-2 text-muted-foreground">分类</h2>
+        <h2 className="text-sm font-bold mb-2 text-muted-foreground lg:text-xl lg:font-bold lg:text-foreground">分类</h2>
         <div className="space-y-1.5">
           <CategoryRow
             name="全部提示词"
@@ -898,9 +1156,9 @@ function CollectionsTab({
   onManage: () => void
 }) {
   return (
-    <div className="px-4 py-3">
+    <div className="px-4 py-3 lg:px-0 lg:py-0 lg:max-w-3xl">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-bold">收藏夹</h2>
+        <h2 className="text-sm font-bold lg:text-xl">收藏夹</h2>
         <Button variant="ghost" size="sm" onClick={onManage}>
           <Settings className="w-4 h-4 mr-1" />管理
         </Button>
@@ -960,10 +1218,10 @@ function StatsTab() {
   }
 
   return (
-    <div className="px-4 py-3 space-y-4">
-      <h2 className="text-sm font-bold">数据统计</h2>
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-3xl">
+      <h2 className="text-sm font-bold lg:text-2xl">数据统计</h2>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label="提示词总数" value={stats.total} icon={Package} color="violet" />
         <StatCard label="收藏" value={stats.favorites} icon={Star} color="amber" />
         <StatCard label="置顶" value={stats.pinned} icon={Pin} color="rose" />
@@ -1028,19 +1286,21 @@ function StatCard({
 // 设置 Tab
 // ============================================
 function SettingsTab({
-  onImportExport, onSync, onManageCollections,
+  onImportExport, onSync, onManageCollections, onCheckUpdate, manualChecking,
 }: {
   onImportExport: () => void
   onSync: () => void
   onManageCollections: () => void
+  onCheckUpdate?: () => void
+  manualChecking?: boolean
 }) {
   const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = React.useState(false)
   React.useEffect(() => setMounted(true), [])
 
   return (
-    <div className="px-4 py-3 space-y-4">
-      <h2 className="text-sm font-bold">设置</h2>
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-2xl">
+      <h2 className="text-sm font-bold lg:text-2xl">设置</h2>
 
       {/* 主题 */}
       <SettingsSection title="外观">
@@ -1088,8 +1348,32 @@ function SettingsTab({
         />
       </SettingsSection>
 
+      {/* 关于 / 更新 */}
+      <SettingsSection title="关于">
+        {onCheckUpdate && (
+          <SettingsRow
+            icon={RefreshCw}
+            title="检查更新"
+            subtitle={manualChecking ? '正在检查...' : `当前版本 v${APP_VERSION}`}
+            onClick={onCheckUpdate}
+          />
+        )}
+        <SettingsRow
+          icon={ExternalLink}
+          title="GitHub 仓库"
+          subtitle={GITHUB_REPO}
+          onClick={() => window.open(`https://github.com/${GITHUB_REPO}`, '_blank', 'noopener,noreferrer')}
+        />
+        <SettingsRow
+          icon={Monitor}
+          title="PC 在线版"
+          subtitle={`访问 https://wolf28014.github.io/${GITHUB_REPO.split('/')[1]}/`}
+          onClick={() => window.open(`https://wolf28014.github.io/${GITHUB_REPO.split('/')[1]}/`, '_blank', 'noopener,noreferrer')}
+        />
+      </SettingsSection>
+
       <div className="text-center text-[10px] text-muted-foreground/60 pt-4">
-        PromptHub Android v1.0.0
+        PromptHub v{APP_VERSION} · 安卓 + Web 通用版
       </div>
     </div>
   )
