@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+
+# Capacitor / Android build
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/build/
+android/local.properties
+android/app/src/main/assets/public/_next/
+android/app/src/main/assets/public/404.html
+android/app/src/main/assets/public/404/
+android/app/src/main/assets/public/__next.*
+
+# iOS (not used)
+ios/
+
+# Environment
+.env
+.env.local
+.env.development
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Generated resources (kept in repo for reproducibility, but ignore original PSDs)
+android-resources/*.psd
+
+# Gradle
+.gradle/
+build/
+
+# APK / build artifacts
+*.apk
+*.aab
+*.tar.gz
