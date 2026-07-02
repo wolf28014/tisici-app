@@ -9,9 +9,8 @@ export const metadata: Metadata = {
   description: "管理、分类、复用你的 AI 提示词，让创意触手可及。",
   keywords: ["提示词", "Prompt", "AI", "提示词库", "Prompt Library"],
   authors: [{ name: "PromptHub" }],
-  icons: {
-    icon: "/logo.svg",
-  },
+  // 不在 metadata.icons 中设路径，让 Next.js 自动加 basePath
+  // 直接写绝对路径会在 GitHub Pages 部署时找不到
 };
 
 export const viewport: Viewport = {
