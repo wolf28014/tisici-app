@@ -118,23 +118,31 @@ export function PromptDetailSheet({ open, onOpenChange, onEdit, onShare }: Props
       return
     }
     setAiFilling(true)
+    // 立即切换到 use 模式，让用户看到填充效果
+    if (mode !== 'use') setMode('use')
     try {
-      // 确保在 use 模式下
-      if (mode !== 'use') setMode('use')
       const result = await aiAutoFillVariables(
         prompt.title,
         prompt.content,
         prompt.description,
         variables,
       )
-      if (Object.keys(result).length === 0) {
-        toast({ title: 'AI 未能生成填充内容', variant: 'destructive' })
+      const filledCount = Object.keys(result).length
+      if (filledCount === 0) {
+        toast({
+          title: 'AI 未能生成填充内容',
+          description: '请检查 API Key 是否有效，或重试',
+          variant: 'destructive',
+        })
       } else {
         setValues(result)
-        const filled = Object.keys(result).length
+        // 列出已填充的变量，方便用户确认
+        const sample = Object.entries(result).slice(0, 2)
+          .map(([k, v]) => `${k}=${v.length > 12 ? v.slice(0, 12) + '...' : v}`)
+          .join('，')
         toast({
-          title: 'AI 已自动填充',
-          description: `${filled}/${variables.length} 个变量已填入推荐值，可手动调整`,
+          title: `✅ AI 已填充 ${filledCount}/${variables.length} 个变量`,
+          description: filledCount <= 2 ? `已填入：${sample}` : `前 2 个：${sample}...`,
         })
       }
     } catch (e) {

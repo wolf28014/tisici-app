@@ -135,12 +135,18 @@ export async function fetchHotPrompts(force = false): Promise<HotFetchResult> {
 }
 
 // 检查是否需要自动拉取（启动时调用）
+// 改为每次启动都拉取（去掉 24h 节流，让用户始终拿到最新热门）
 export async function autoFetchHotIfNeeded(): Promise<void> {
-  const cache = getCache()
-  if (cache && Date.now() - cache.lastFetch < HOT_CACHE_TTL) return
+  // 如果 AI 未配置，跳过
+  try {
+    const { isAIConfigured } = await import('./ai')
+    if (!isAIConfigured()) return
+  } catch {
+    return
+  }
   // 静默拉取，不报错
   try {
-    await fetchHotPrompts(false)
+    await fetchHotPrompts(true) // force=true，每次启动都拉取最新
   } catch (e) {
     console.warn('autoFetchHot failed:', e)
   }

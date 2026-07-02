@@ -312,7 +312,7 @@ export type HotPrompt = GeneratedPrompt
 export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]> {
   const system = `你是一位顶级 Prompt 工程师，熟悉当下（${new Date().getFullYear()}年${new Date().getMonth() + 1}月）AI 社区最热门的提示词趋势。
 你只能输出 JSON 数组，不要任何解释或 markdown 代码块。
-数组结构（共 10 条）：
+数组结构（共 50 条）：
 [
   {
     "title": "标题（≤20字，吸睛）",
@@ -325,25 +325,26 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
 要求：
 - 涵盖当下最热的 AI 应用场景（如 ChatGPT、Claude、Midjourney、Sora、AI 编程、AI 短视频等）
 - 内容要有实用价值，不能是空话
+- 必须 50 条，每条内容不同，覆盖多个领域
 - 直接输出 JSON 数组，不要包裹在对象里`
 
   const user = category
-    ? `请生成 10 条当前最热门的 ${category} 相关提示词。`
-    : `请生成 10 条当前 AI 社区最热门、最受欢迎的提示词，覆盖多个领域。`
+    ? `请生成 50 条当前最热门的 ${category} 相关提示词。`
+    : `请生成 50 条当前 AI 社区最热门、最受欢迎的提示词，覆盖写作、编程、学习、生活、工作、电商、AI 模特、AI 短剧等多个领域。每条提示词必须有实际使用价值，包含 {{变量}} 占位符。`
 
   const raw = await callAI(
     [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 0.9, jsonMode: true, maxTokens: 4000 },
+    { temperature: 0.9, jsonMode: true, maxTokens: 16000 },
   )
 
   const jsonStr = extractJSON(raw)
   if (!jsonStr) return []
   try {
     const arr = JSON.parse(jsonStr) as HotPrompt[]
-    return Array.isArray(arr) ? arr.slice(0, 10) : []
+    return Array.isArray(arr) ? arr.slice(0, 50) : []
   } catch {
     return []
   }
@@ -351,7 +352,8 @@ export async function aiSearchHotPrompts(category?: string): Promise<HotPrompt[]
 
 // ============================================
 // AI 自动填充变量
-// 根据提示词内容和变量名，AI 推断每个变量的合理取值
+// 根据提示词内容和变量名，AI 为每个变量生成一个**具体的、可直接使用的取值**
+// 例如：变量 {{核心主题}} → AI 返回 "男人逆袭成功"
 // ============================================
 export type AutoFillResult = Record<string, string>
 
@@ -363,47 +365,75 @@ export async function aiAutoFillVariables(
 ): Promise<AutoFillResult> {
   if (variables.length === 0) return {}
 
-  const system = `你是一位 Prompt 工程师。给定一个提示词模板和其中的变量列表，请根据上下文为每个变量推断一个合理、具体、可直接使用的取值。
-只能输出 JSON 对象，不要任何解释。
-JSON 结构：{"变量名": "推荐取值"}
+  const varList = variables.map((v, i) => `${i + 1}. {{${v}}}`).join('\n')
 
-要求：
-- 取值要具体、可直接使用（不要"请输入..."这种占位文字）
-- 取值要符合该变量在提示词中的语义（结合上下文判断）
-- 取值长度适中（通常 5-30 字）
-- 不要 invent 与提示词无关的内容`
+  const system = `你是一位创意内容生成助手。给定一个提示词模板和其中的变量列表，你需要为每个变量生成一个**具体的、可直接使用的取值**，让用户拿到填充后的提示词就能直接用。
 
-  const user = `提示词标题：${promptTitle}
-提示词描述：${promptDescription || '（无）'}
-提示词内容：
+【关键要求】
+1. 取值必须是**具体内容**，不能是描述性文字、不能是占位符、不能含"请输入"等字样
+2. 变量名可能包含冒号和说明文字（如 "题材：霸总/重生/复仇/甜宠/穿越"），这种情况下：
+   - 冒号后的说明是供你参考的取值范围或示例
+   - 你需要从中选一个，或写一个符合该范围的具体值
+   - 例如 {{题材：霸总/重生/复仇/甜宠/穿越}} → 取值 "霸总"
+   - 例如 {{主角设定}} → 取值 "30岁破产女总裁"
+   - 例如 {{单集时长}} 分钟 → 取值 "3"
+3. 简单变量名（如 {{核心主题}}）直接生成具体内容：
+   - {{核心主题}} → "男人逆袭成功"
+   - {{目标人群}} → "25-35岁职场女性"
+   - {{产品特点}} → "轻薄便携、续航12小时"
+4. 取值要贴合提示词语境，长度通常 2-30 字
+5. 输出**纯 JSON 对象**，键是变量名（保留原样，含冒号也保留），值是具体取值
+6. 不要输出任何解释、markdown 代码块、前后缀文字
+
+【输出格式示例】
+如果变量是 ["题材：霸总/重生/复仇/甜宠/穿越", "主角设定", "核心冲突"]，输出：
+{"题材：霸总/重生/复仇/甜宠/穿越": "霸总", "主角设定": "30岁破产女总裁", "核心冲突": "前夫争夺女儿抚养权"}`
+
+  const user = `请为以下提示词的变量生成具体取值：
+
+【提示词标题】${promptTitle}
+【提示词描述】${promptDescription || '（无）'}
+【提示词内容】
 ${promptContent}
 
-需要填充的变量：
-${variables.map(v => `- {{${v}}}`).join('\n')}
+【需要填充的变量列表】
+${varList}
 
-请为每个变量推荐一个合理的取值。`
+请输出 JSON 对象，键是变量名（保留原样），值是具体的、可直接使用的内容。`
 
   const raw = await callAI(
     [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    { temperature: 0.7, jsonMode: true, maxTokens: 1500 },
+    { temperature: 0.8, jsonMode: true, maxTokens: 2000 },
   )
 
+  if (!raw) {
+    console.warn('aiAutoFill: AI 返回空内容')
+    return {}
+  }
+
   const jsonStr = extractJSON(raw)
-  if (!jsonStr) return {}
+  if (!jsonStr) {
+    console.warn('aiAutoFill: AI 返回无法解析的内容:', raw.slice(0, 300))
+    return {}
+  }
   try {
     const result = JSON.parse(jsonStr) as AutoFillResult
-    // 只保留请求的变量
+    // 只保留请求的变量，且取值必须是字符串或数字
     const filtered: AutoFillResult = {}
     for (const v of variables) {
-      if (result[v] && typeof result[v] === 'string') {
-        filtered[v] = result[v]
+      const val = result[v]
+      if (typeof val === 'string' && val.trim()) {
+        filtered[v] = val.trim()
+      } else if (typeof val === 'number') {
+        filtered[v] = String(val)
       }
     }
     return filtered
-  } catch {
+  } catch (e) {
+    console.warn('aiAutoFill: JSON 解析失败:', e, jsonStr.slice(0, 300))
     return {}
   }
 }
