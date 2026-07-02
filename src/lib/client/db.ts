@@ -1,8 +1,17 @@
 // 客户端 SQLite 数据库层（基于 sql.js WASM）
 // 替代原 Prisma + 服务端 SQLite 架构
+//
+// 注意：sql.js 默认 export 在 browser 环境下指向 sql-wasm-browser.js，
+// 但该入口会查找 sql-wasm-browser.wasm，cdnjs 上没这个文件（只有 sql-wasm.wasm）。
+// 所以我们显式 import sql-wasm.js 入口，它对应 cdnjs 上存在的 sql-wasm.wasm。
 
-import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js'
+// @ts-expect-error - 显式指定入口
+import initSqlJsBrowser from 'sql.js/dist/sql-wasm.js'
 import { v4 as uuidv4 } from 'uuid'
+
+const initSqlJs = initSqlJsBrowser as unknown as (config?: {
+  locateFile?: (file: string) => string
+}) => Promise<SqlJsStatic>
 
 // ============================================
 // 类型定义（与原 prompt-types.ts 兼容）

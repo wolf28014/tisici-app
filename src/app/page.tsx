@@ -84,6 +84,13 @@ export default function HomePage() {
     initialize()
   }, [initialize])
 
+  // 切换筛选条件时重新拉取（必须在任何条件 return 之前调用 hooks）
+  React.useEffect(() => {
+    if (activeTab === 'home') {
+      fetchPrompts()
+    }
+  }, [activeTab, searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, fetchPrompts])
+
   // SSR 期间渲染骨架屏
   if (!mounted) {
     return (
@@ -105,13 +112,6 @@ export default function HomePage() {
       </div>
     )
   }
-
-  // 切换筛选条件时重新拉取
-  React.useEffect(() => {
-    if (activeTab === 'home') {
-      fetchPrompts()
-    }
-  }, [activeTab, searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, fetchPrompts])
 
   const handleEdit = (p: Prompt) => {
     setEditing(p)
