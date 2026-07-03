@@ -76,6 +76,35 @@ export default function HomePage() {
     initialize()
   }, [initialize])
 
+  // 切换筛选条件时重新拉取（必须在条件 return 之前）
+  React.useEffect(() => {
+    if (activeTab === 'home') {
+      fetchPrompts()
+    }
+  }, [activeTab, searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, fetchPrompts])
+
+  // 所有 useMemo 必须在条件 return 之前
+  const activeCategoryName = React.useMemo(() => {
+    const find = (cats: typeof categories): string | null => {
+      for (const c of cats) {
+        if (c.id === activeCategoryId) return c.name
+        if (c.children) {
+          const sub = find(c.children)
+          if (sub) return sub
+        }
+      }
+      return null
+    }
+    return find(categories)
+  }, [categories, activeCategoryId])
+
+  const activeCollectionName = React.useMemo(
+    () => collections.find(c => c.id === activeCollectionId)?.name,
+    [collections, activeCollectionId],
+  )
+
+  const hasActiveFilter = activeCategoryId || activeCollectionId || activeTag || showFavoritesOnly
+
   // SSR 期间渲染骨架屏
   if (!mounted) {
     return (
@@ -97,13 +126,6 @@ export default function HomePage() {
       </div>
     )
   }
-
-  // 切换筛选条件时重新拉取
-  React.useEffect(() => {
-    if (activeTab === 'home') {
-      fetchPrompts()
-    }
-  }, [activeTab, searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, fetchPrompts])
 
   const handleEdit = (p: Prompt) => {
     setEditing(p)
@@ -127,27 +149,6 @@ export default function HomePage() {
       await usePromptStore.getState().incrementUsage(p.id)
     }
   }
-
-  const activeCategoryName = React.useMemo(() => {
-    const find = (cats: typeof categories): string | null => {
-      for (const c of cats) {
-        if (c.id === activeCategoryId) return c.name
-        if (c.children) {
-          const sub = find(c.children)
-          if (sub) return sub
-        }
-      }
-      return null
-    }
-    return find(categories)
-  }, [categories, activeCategoryId])
-
-  const activeCollectionName = React.useMemo(
-    () => collections.find(c => c.id === activeCollectionId)?.name,
-    [collections, activeCollectionId],
-  )
-
-  const hasActiveFilter = activeCategoryId || activeCollectionId || activeTag || showFavoritesOnly
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
