@@ -1,7 +1,7 @@
 // 应用更新检查 + APK 下载
 // 通过 GitHub Releases API 检查新版本
 
-export const APP_VERSION = '1.3.3' // 当前应用版本
+export const APP_VERSION = '1.3.4' // 当前应用版本
 export const GITHUB_REPO = 'wolf28014/tisici-app'
 const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 

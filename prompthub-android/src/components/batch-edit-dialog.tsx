@@ -13,9 +13,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { X, Plus, Tag as TagIcon, FolderPlus, Trash2, Check } from 'lucide-react'
+import {
+  X, Plus, Tag as TagIcon, FolderPlus, Trash2, Check,
+  FolderInput, Star, Pin, Copy, FileDown,
+} from 'lucide-react'
 import { usePromptStore } from '@/lib/prompt-store'
 import { useToast } from '@/hooks/use-toast'
+import { copyToClipboard } from '@/lib/prompt-types'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -25,7 +29,11 @@ type Props = {
 }
 
 export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
-  const { tags: allTags, collections, batchAddTags, batchRemoveTags, batchSetCollection, batchDelete } = usePromptStore()
+  const {
+    tags: allTags, collections, categories,
+    batchAddTags, batchRemoveTags, batchSetCollection, batchDelete,
+    updatePrompt, prompts,
+  } = usePromptStore()
   const { toast } = useToast()
 
   const [addTagsInput, setAddTagsInput] = React.useState('')
@@ -33,6 +41,7 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
   const [removeTags, setRemoveTags] = React.useState<string[]>([])
   const [removeTagsInput, setRemoveTagsInput] = React.useState('')
   const [targetCollection, setTargetCollection] = React.useState<string>('none')
+  const [targetCategory, setTargetCategory] = React.useState<string>('keep')
   const [processing, setProcessing] = React.useState(false)
 
   React.useEffect(() => {
@@ -42,8 +51,22 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
       setRemoveTags([])
       setRemoveTagsInput('')
       setTargetCollection('none')
+      setTargetCategory('keep')
     }
   }, [open])
+
+  // 扁平化分类列表
+  const flatCategories = React.useMemo(() => {
+    const flat: Array<{ id: string; name: string; color?: string | null; indent?: number }> = []
+    const walk = (cats: any[], indent = 0) => {
+      for (const c of cats) {
+        flat.push({ id: c.id, name: c.name, color: c.color, indent })
+        if (c.children) walk(c.children, indent + 1)
+      }
+    }
+    walk(categories)
+    return flat
+  }, [categories])
 
   const addAddTag = () => {
     const t = addTagsInput.trim()
@@ -116,6 +139,87 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
     }
   }
 
+  // 批量移动分类
+  const handleMoveCategory = async () => {
+    if (targetCategory === 'keep') {
+      toast({ title: '请选择目标分类', variant: 'destructive' })
+      return
+    }
+    setProcessing(true)
+    let count = 0
+    for (const id of selectedIds) {
+      const catId = targetCategory === 'none' ? null : targetCategory
+      const ok = await updatePrompt(id, { categoryId: catId })
+      if (ok) count++
+    }
+    setProcessing(false)
+    const catName = targetCategory === 'none' ? '未分类' : flatCategories.find(c => c.id === targetCategory)?.name
+    toast({ title: '批量移动完成', description: `${count}/${selectedIds.length} 条 → ${catName}` })
+    onOpenChange(false)
+  }
+
+  // 批量收藏/取消收藏
+  const handleBatchFavorite = async (favorite: boolean) => {
+    setProcessing(true)
+    let count = 0
+    for (const id of selectedIds) {
+      const ok = await updatePrompt(id, { isFavorite: favorite })
+      if (ok) count++
+    }
+    setProcessing(false)
+    toast({ title: favorite ? '已批量收藏' : '已批量取消收藏', description: `${count} 条` })
+    onOpenChange(false)
+  }
+
+  // 批量置顶/取消置顶
+  const handleBatchPin = async (pinned: boolean) => {
+    setProcessing(true)
+    let count = 0
+    for (const id of selectedIds) {
+      const ok = await updatePrompt(id, { isPinned: pinned })
+      if (ok) count++
+    }
+    setProcessing(false)
+    toast({ title: pinned ? '已批量置顶' : '已批量取消置顶', description: `${count} 条` })
+    onOpenChange(false)
+  }
+
+  // 批量复制内容
+  const handleBatchCopy = async () => {
+    setProcessing(true)
+    const selected = prompts.filter(p => selectedIds.includes(p.id))
+    const text = selected.map(p => `【${p.title}】\n${p.content}`).join('\n\n---\n\n')
+    const ok = await copyToClipboard(text)
+    setProcessing(false)
+    if (ok) {
+      toast({ title: '已批量复制', description: `${selected.length} 条提示词内容已复制到剪贴板` })
+      onOpenChange(false)
+    } else {
+      toast({ title: '复制失败', variant: 'destructive' })
+    }
+  }
+
+  // 批量导出
+  const handleBatchExport = async () => {
+    const selected = prompts.filter(p => selectedIds.includes(p.id))
+    const data = {
+      prompts: selected,
+      exportedAt: new Date().toISOString(),
+      count: selected.length,
+    }
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `prompthub-batch-${selected.length}-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast({ title: '已批量导出', description: `${selected.length} 条提示词已导出为 JSON` })
+    onOpenChange(false)
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
@@ -127,10 +231,12 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
         </DialogHeader>
 
         <Tabs defaultValue="addTags" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="addTags" className="text-xs">加标签</TabsTrigger>
-            <TabsTrigger value="removeTags" className="text-xs">移除标签</TabsTrigger>
+            <TabsTrigger value="removeTags" className="text-xs">移标签</TabsTrigger>
+            <TabsTrigger value="category" className="text-xs">移动分类</TabsTrigger>
             <TabsTrigger value="collection" className="text-xs">收藏夹</TabsTrigger>
+            <TabsTrigger value="more" className="text-xs">更多</TabsTrigger>
             <TabsTrigger value="delete" className="text-xs text-destructive">删除</TabsTrigger>
           </TabsList>
 
@@ -230,6 +336,33 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
             </Button>
           </TabsContent>
 
+          {/* Move Category */}
+          <TabsContent value="category" className="space-y-3 mt-4">
+            <Label>将选中的提示词移动到指定分类</Label>
+            <Select value={targetCategory} onValueChange={setTargetCategory}>
+              <SelectTrigger>
+                <SelectValue placeholder="选择目标分类" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="keep">-- 请选择 --</SelectItem>
+                <SelectItem value="none">未分类</SelectItem>
+                {flatCategories.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {'　'.repeat(c.indent || 0)}{c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={handleMoveCategory}
+              disabled={processing || targetCategory === 'keep'}
+              className="w-full gap-1.5"
+            >
+              <FolderInput className="h-4 w-4" />
+              批量移动分类
+            </Button>
+          </TabsContent>
+
           {/* Collection */}
           <TabsContent value="collection" className="space-y-3 mt-4">
             <Label>将选中的提示词加入收藏夹</Label>
@@ -254,6 +387,67 @@ export function BatchEditDialog({ open, onOpenChange, selectedIds }: Props) {
               <FolderPlus className="h-4 w-4" />
               应用收藏夹分组
             </Button>
+          </TabsContent>
+
+          {/* More actions */}
+          <TabsContent value="more" className="space-y-3 mt-4">
+            <Label>更多批量操作</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                onClick={() => handleBatchFavorite(true)}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5"
+              >
+                <Star className="h-4 w-4 text-amber-500" />
+                批量收藏
+              </Button>
+              <Button
+                onClick={() => handleBatchFavorite(false)}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5"
+              >
+                <Star className="h-4 w-4" />
+                取消收藏
+              </Button>
+              <Button
+                onClick={() => handleBatchPin(true)}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5"
+              >
+                <Pin className="h-4 w-4 text-amber-500" />
+                批量置顶
+              </Button>
+              <Button
+                onClick={() => handleBatchPin(false)}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5"
+              >
+                <Pin className="h-4 w-4" />
+                取消置顶
+              </Button>
+              <Button
+                onClick={handleBatchCopy}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5 col-span-2"
+              >
+                <Copy className="h-4 w-4" />
+                批量复制内容（{selectedIds.length} 条合并复制）
+              </Button>
+              <Button
+                onClick={handleBatchExport}
+                disabled={processing}
+                variant="outline"
+                className="gap-1.5 col-span-2"
+              >
+                <FileDown className="h-4 w-4" />
+                批量导出为 JSON
+              </Button>
+            </div>
           </TabsContent>
 
           {/* Delete */}
