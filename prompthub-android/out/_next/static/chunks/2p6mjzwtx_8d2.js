@@ -4,17 +4,19 @@ JSON 结构：
 {
   "title": "标题（≤20字，简短有力）",
   "description": "一句话描述这个提示词的用途（≤40字）",
-  "content": "完整提示词正文，使用 {{变量}} 占位符标记需要用户填写的变量。结构化排版，包含角色设定、任务说明、输出格式要求。",
+  "content": "完整提示词正文，**不要使用 {{变量}} 占位符**，直接写出具体的、可直接复制使用的内容。结构化排版，包含：1.角色设定 2.任务背景 3.具体要求（分点详细列出）4.输出格式 5.注意事项",
   "tags": ["3-5个标签"],
   "suggestedCategory": "建议分类名（从：写作创作/编程开发/学习辅导/生活日常/工作效率/电商运营/AI模特商拍/AI短剧制作/其他 中选一个）"
 }`,r=`请按以下要求生成一个提示词：
 【用户需求】${e}
-【风格要求】${{detailed:"结构完整、字段齐全、步骤清晰、每段都有详细要求",concise:"简短有力、只保留核心要素、不啰嗦",creative:"富有想象力、使用比喻和故事化表达、不拘一格"}[t]}
+【风格要求】${{detailed:"结构完整、字段齐全、步骤清晰、每段都有详细要求，content 至少 300 字",concise:"简短有力、只保留核心要素、不啰嗦，content 至少 150 字",creative:"富有想象力、使用比喻和故事化表达、不拘一格，content 至少 250 字"}[t]}
 
 注意：
-- content 中所有用户需要填写的内容都用 {{变量名}} 形式
+- **content 绝对不能包含 {{}} 占位符**，必须是用户复制后可直接发给 AI 的完整内容
+- content 要详细实用，包含角色设定、任务背景、具体要求、输出格式、注意事项
+- 如果需要场景化，给出一个具体的场景示例（如"以智能手表为例"）
 - 不要在 content 中保留任何解释性文字
-- 直接输出 JSON，不要 markdown 代码块`,n=N(await y([{role:"system",content:a},{role:"user",content:r}],{temperature:"creative"===t?.9:.7,jsonMode:!0,maxTokens:2e3}));if(!n)throw Error("AI 返回格式错误，无法解析");return JSON.parse(n)}async function w(e,t){if(0===t.length)return[];let a=`你是提示词相似度评估专家。只能输出 JSON 数组，不要任何解释。
+- 直接输出 JSON，不要 markdown 代码块`,n=N(await y([{role:"system",content:a},{role:"user",content:r}],{temperature:"creative"===t?.9:.7,jsonMode:!0,maxTokens:3e3}));if(!n)throw Error("AI 返回格式错误，无法解析");return JSON.parse(n)}async function w(e,t){if(0===t.length)return[];let a=`你是提示词相似度评估专家。只能输出 JSON 数组，不要任何解释。
 JSON 结构：
 [
   { "id": "候选id", "title": "候选标题", "reason": "20-40 字解释为什么相似", "score": 0-100 整数 }
