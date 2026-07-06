@@ -22,7 +22,7 @@ import {
   Tag as TagIcon, Settings, FolderOpen, Cloud, Wand2, Palette, Sun, Moon,
   Library, Home, Folder, BarChart3, Menu, X, Check, ChevronRight,
   Package, Trash2, Eye, RefreshCw, ExternalLink, Monitor,
-  Flame, User as UserIcon, LogIn, Search as SearchIcon, Wand,
+  Flame, User as UserIcon, LogIn, Search as SearchIcon, Wand, Pencil,
 } from 'lucide-react'
 import { PromptFormDialog } from '@/components/prompt-form-dialog'
 import { PromptDetailSheet } from '@/components/prompt-detail-sheet'
