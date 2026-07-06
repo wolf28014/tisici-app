@@ -869,7 +869,7 @@ function HomeTab({
   // 切换筛选条件时重置到第一页
   React.useEffect(() => {
     setCurrentPage(1)
-  }, [searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag])
+  }, [sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, prompts.length])
 
   const handlePageSizeChange = (size: number) => {
     setPageSize(size)
