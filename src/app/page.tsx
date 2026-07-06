@@ -40,7 +40,8 @@ import { AISearchDialog } from '@/components/ai-search-dialog'
 import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
 import {
   getAIConfig, setAIConfig, isAIConfigured, type AIConfig,
-  getAllChannels, getActiveChannelId, setActiveChannelId, getActiveChannel,
+  getAllChannels, getActiveChannelId as getStoredActiveChannelId,
+  setActiveChannelId as setStoredActiveChannelId, getActiveChannel,
   addOrUpdateChannel, deleteChannel, createChannelFromPreset,
   AI_CHANNEL_PRESETS, type ChannelConfig,
 } from '@/lib/client/ai'
@@ -1827,14 +1828,14 @@ function SettingsRow({
 function AIConfigSection() {
   const [open, setOpen] = React.useState(false)
   const [channels, setChannels] = React.useState<ChannelConfig[]>([])
-  const [activeChannelId, setActiveChannelId] = React.useState<string | null>(null)
+  const [activeChannelId, setActiveChannelIdState] = React.useState<string | null>(null)
   const [editingChannel, setEditingChannel] = React.useState<ChannelConfig | null>(null)
   const { toast } = useToast()
 
   React.useEffect(() => {
     if (open) {
       setChannels(getAllChannels())
-      setActiveChannelId(getActiveChannelId())
+      setActiveChannelIdState(getStoredActiveChannelId())
     }
   }, [open])
 
@@ -1842,8 +1843,8 @@ function AIConfigSection() {
   const activeConfig = getAIConfig()
 
   const handleSwitchChannel = (id: string) => {
-    setActiveChannelId(id)
-    setActiveChannelIdStore(id)
+    setActiveChannelIdState(id)
+    setStoredActiveChannelId(id)
     const ch = channels.find(c => c.id === id)
     if (ch) {
       setAIConfig({
@@ -1861,15 +1862,14 @@ function AIConfigSection() {
     addOrUpdateChannel(newCh)
     setChannels(getAllChannels())
     setEditingChannel(newCh)
-    setActiveChannelIdStore(newCh.id)
-    setActiveChannelId(newCh.id)
+    setStoredActiveChannelId(newCh.id)
+    setActiveChannelIdState(newCh.id)
   }
 
   const handleSaveChannel = (ch: ChannelConfig) => {
     addOrUpdateChannel(ch)
     setChannels(getAllChannels())
     setEditingChannel(null)
-    // 如果是活跃渠道，更新配置
     if (ch.id === activeChannelId) {
       setAIConfig({
         apiKey: ch.apiKey,
@@ -1885,12 +1885,9 @@ function AIConfigSection() {
     if (!confirm('确定删除这个渠道配置？')) return
     deleteChannel(id)
     setChannels(getAllChannels())
-    setActiveChannelId(getActiveChannelId())
+    setActiveChannelIdState(getStoredActiveChannelId())
     toast({ title: '渠道已删除' })
   }
-
-  // 别名避免和 React state setter 冲突
-  const setActiveChannelIdStore = setActiveChannelId as (id: string) => void
 
   return (
     <SettingsSection title="AI 配置">
