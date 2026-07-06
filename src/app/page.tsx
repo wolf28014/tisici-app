@@ -866,10 +866,10 @@ function HomeTab({
   const totalPages = Math.ceil(prompts.length / pageSize)
   const pagedPrompts = prompts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
-  // 切换筛选条件时重置到第一页
+  // 切换筛选条件时重置到第一页（用 hasFilter 和 prompts.length 代替）
   React.useEffect(() => {
     setCurrentPage(1)
-  }, [sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, prompts.length])
+  }, [sortBy, hasFilter, prompts.length])
 
   const handlePageSizeChange = (size: number) => {
     setPageSize(size)
