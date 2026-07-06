@@ -1,0 +1,2102 @@
+'use client'
+
+import * as React from 'react'
+import { usePromptStore } from '@/lib/prompt-store'
+import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger,
+} from '@/components/ui/sheet'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import {
+  Sparkles, Search, Plus, Pin, Clock, TrendingUp, Star, Download, Upload,
+  Tag as TagIcon, Settings, FolderOpen, Cloud, Wand2, Palette, Sun, Moon,
+  Library, Home, Folder, BarChart3, Menu, X, Check, ChevronRight,
+  Package, Trash2, Eye, RefreshCw, ExternalLink, Monitor,
+  Flame, User as UserIcon, LogIn, Search as SearchIcon, Wand,
+} from 'lucide-react'
+import { PromptFormDialog } from '@/components/prompt-form-dialog'
+import { PromptDetailSheet } from '@/components/prompt-detail-sheet'
+import { ImportExportDialog } from '@/components/import-export-dialog'
+import { ShareDialog } from '@/components/share-dialog'
+import { BatchEditDialog } from '@/components/batch-edit-dialog'
+import { CollectionManagerDialog } from '@/components/collection-manager-dialog'
+import { CloudSyncDialog } from '@/components/cloud-sync-dialog'
+import { AIGenerateDialog } from '@/components/ai-generate-dialog'
+import { ThemeToggle } from '@/components/theme-toggle'
+import { UpdateDialog, useAutoCheckUpdate } from '@/components/update-dialog'
+import { ThemeSwitcher } from '@/components/theme-switcher'
+import { AuthDialog } from '@/components/auth-dialog'
+import { AISearchDialog } from '@/components/ai-search-dialog'
+import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
+import { getAIConfig, setAIConfig, isAIConfigured, type AIConfig } from '@/lib/client/ai'
+import { checkForUpdate, APP_VERSION, GITHUB_REPO, type UpdateInfo } from '@/lib/client/updater'
+import { fetchHotPrompts, autoFetchHotIfNeeded, removeAllVariablesFromExisting, type FetchProgress } from '@/lib/client/hot-prompts'
+import { getCurrentUser, isLoggedIn, maskEmail } from '@/lib/client/auth'
+import { cn } from '@/lib/utils'
+import { useTheme } from 'next-themes'
+
+// ============================================
+// 主页：PC + 移动响应式布局
+// - PC (≥1024px)：左侧固定 sidebar + 主内容区
+// - 移动端：底部 Tab + 抽屉筛选
+// ============================================
+type TabKey = 'home' | 'categories' | 'collections' | 'stats' | 'settings'
+
+export default function HomePage() {
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+
+  const {
+    prompts, loading, initialize, refreshAll, fetchPrompts, selectPrompt,
+    searchQuery, setSearchQuery, sortBy, setSortBy,
+    showFavoritesOnly, setShowFavoritesOnly,
+    activeCategoryId, activeCollectionId, activeTag, setActiveCategoryId,
+    setActiveCollectionId, setActiveTag,
+    categories, collections, tags,
+    selectionMode, setSelectionMode, selectedIds, selectAll, clearSelection,
+    error,
+  } = usePromptStore()
+  const { toast } = useToast()
+
+  const [activeTab, setActiveTab] = React.useState<TabKey>('home')
+  const [filterOpen, setFilterOpen] = React.useState(false)
+  const [formOpen, setFormOpen] = React.useState(false)
+  const [detailOpen, setDetailOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<Prompt | null>(null)
+  const [importExportOpen, setImportExportOpen] = React.useState(false)
+  const [shareOpen, setShareOpen] = React.useState(false)
+  const [sharingPrompt, setSharingPrompt] = React.useState<Prompt | null>(null)
+  const [batchOpen, setBatchOpen] = React.useState(false)
+  const [collectionOpen, setCollectionOpen] = React.useState(false)
+  const [syncOpen, setSyncOpen] = React.useState(false)
+  const [aiGenerateOpen, setAiGenerateOpen] = React.useState(false)
+
+  // 应用更新检查
+  const updateCheck = useAutoCheckUpdate()
+  const [manualChecking, setManualChecking] = React.useState(false)
+
+  // 主题切换器、账号对话框
+  const [themeOpen, setThemeOpen] = React.useState(false)
+  const [authOpen, setAuthOpen] = React.useState(false)
+  const [authed, setAuthed] = React.useState(false)
+  const [fetchingHot, setFetchingHot] = React.useState(false)
+  const [hotProgress, setHotProgress] = React.useState<FetchProgress | null>(null)
+  const [aiSearchOpen, setAiSearchOpen] = React.useState(false)
+  const [removingVars, setRemovingVars] = React.useState(false)
+  const [removeVarsProgress, setRemoveVarsProgress] = React.useState<{ current: number; total: number; title: string } | null>(null)
+
+  // 初始化数据库
+  React.useEffect(() => {
+    initialize()
+    setAuthed(isLoggedIn())
+    // 启动时静默拉取热门提示词（24h 内只拉一次）
+    autoFetchHotIfNeeded().then(() => refreshAll())
+  }, [initialize, refreshAll])
+
+  // 切换筛选条件时重新拉取（必须在任何条件 return 之前调用 hooks）
+  React.useEffect(() => {
+    if (activeTab === 'home') {
+      fetchPrompts()
+    }
+  }, [activeTab, searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag, fetchPrompts])
+
+  // 所有 useMemo 必须在条件 return 之前调用，保证 hooks 顺序一致
+  const activeCategoryName = React.useMemo(() => {
+    const find = (cats: typeof categories): string | null => {
+      for (const c of cats) {
+        if (c.id === activeCategoryId) return c.name
+        if (c.children) {
+          const sub = find(c.children)
+          if (sub) return sub
+        }
+      }
+      return null
+    }
+    return find(categories)
+  }, [categories, activeCategoryId])
+
+  const activeCollectionName = React.useMemo(
+    () => collections.find(c => c.id === activeCollectionId)?.name,
+    [collections, activeCollectionId],
+  )
+
+  const hasActiveFilter = activeCategoryId || activeCollectionId || activeTag || showFavoritesOnly
+
+  // SSR 期间渲染骨架屏
+  if (!mounted) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <div className="safe-top sticky top-0 z-30 bg-background border-b border-border">
+          <div className="flex items-center gap-2 px-4 py-3">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600" />
+            <div className="flex-1">
+              <div className="h-4 w-32 bg-muted rounded mb-1" />
+              <div className="h-3 w-20 bg-muted/50 rounded" />
+            </div>
+          </div>
+        </div>
+        <div className="flex-1 p-4 space-y-3">
+          {[1,2,3].map(i => (
+            <div key={i} className="h-28 bg-muted/30 rounded-xl animate-pulse" />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const handleEdit = (p: Prompt) => {
+    setEditing(p)
+    setFormOpen(true)
+  }
+
+  const handleShare = (p: Prompt) => {
+    setSharingPrompt(p)
+    setShareOpen(true)
+  }
+
+  const handleNewPrompt = () => {
+    setEditing(null)
+    setFormOpen(true)
+  }
+
+  const handleCopyPrompt = async (p: Prompt) => {
+    const ok = await copyToClipboard(p.content)
+    if (ok) {
+      toast({ title: '已复制', description: p.title })
+      await usePromptStore.getState().incrementUsage(p.id)
+    }
+  }
+
+  // 手动检查更新
+  const handleCheckUpdate = async () => {
+    setManualChecking(true)
+    try {
+      const info = await checkForUpdate(true)
+      if (!info) {
+        toast({ title: '检查失败', description: '网络错误，请稍后重试', variant: 'destructive' })
+      } else if (info.hasUpdate) {
+        updateCheck.setUpdateInfo(info)
+        updateCheck.setOpen(true)
+      } else {
+        toast({
+          title: '已是最新版本',
+          description: `当前 v${info.currentVersion} · 最新 v${info.latestVersion}`,
+        })
+      }
+    } finally {
+      setManualChecking(false)
+    }
+  }
+
+  // 拉取 AI 热门提示词（带进度反馈）
+  const handleFetchHot = async () => {
+    if (!isAIConfigured()) {
+      toast({ title: '请先配置 AI API Key', description: '设置 → AI API 配置', variant: 'destructive' })
+      return
+    }
+    setFetchingHot(true)
+    setHotProgress({ stage: 'starting', message: '开始拉取...' })
+    try {
+      const result = await fetchHotPrompts(true, (p) => {
+        setHotProgress(p)
+      })
+      if (result.success) {
+        await refreshAll()
+        toast({
+          title: `✅ 新增 ${result.count} 条热门提示词`,
+          description: `已按分类追加保存，不会覆盖已有数据`,
+        })
+      } else {
+        toast({ title: '拉取失败', description: result.message, variant: 'destructive' })
+      }
+    } catch (e) {
+      toast({ title: '拉取失败', description: (e as Error).message, variant: 'destructive' })
+    } finally {
+      setFetchingHot(false)
+      setTimeout(() => setHotProgress(null), 2000)
+    }
+  }
+
+  // 批量去除已存在提示词中的变量
+  const handleRemoveVariables = async () => {
+    if (!isAIConfigured()) {
+      toast({ title: '请先配置 AI API Key', description: '设置 → AI API 配置', variant: 'destructive' })
+      return
+    }
+    if (!confirm('将自动重写所有含 {{变量}} 的提示词为完整版本（每条约 2-3 秒）。继续？')) return
+    setRemovingVars(true)
+    try {
+      const result = await removeAllVariablesFromExisting((p) => {
+        setRemoveVarsProgress({ current: p.current, total: p.total, title: p.currentTitle })
+      })
+      await refreshAll()
+      toast({
+        title: '✅ 重写完成',
+        description: `共处理 ${result.processed} 条，成功 ${result.success} 条，失败 ${result.failed} 条`,
+      })
+    } catch (e) {
+      toast({ title: '重写失败', description: (e as Error).message, variant: 'destructive' })
+    } finally {
+      setRemovingVars(false)
+      setRemoveVarsProgress(null)
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* ===== PC 端左侧 Sidebar ===== */}
+      <aside className="pc-only fixed left-0 top-0 bottom-0 w-[260px] flex flex-col border-r border-border bg-card/50 backdrop-blur-md z-40 overflow-hidden h-screen">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white shrink-0">
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-bold text-base leading-tight">PromptHub</div>
+            <div className="text-[10px] text-muted-foreground">提示词库 v{APP_VERSION}</div>
+          </div>
+        </div>
+        <nav className="flex-1 overflow-y-auto pc-sidebar-scroll p-3 space-y-1">
+          {/* 导航项 */}
+          <PcNavItem icon={Home} label="全部提示词" active={activeTab === 'home' && !hasActiveFilter} onClick={() => {
+            setActiveCategoryId(null); setActiveCollectionId(null); setActiveTag(null); setShowFavoritesOnly(false); setActiveTab('home')
+          }} />
+          <PcNavItem icon={Star} label="我的收藏" active={showFavoritesOnly} onClick={() => {
+            setShowFavoritesOnly(!showFavoritesOnly); setActiveTab('home')
+          }} />
+          <PcNavItem icon={BarChart3} label="统计" active={activeTab === 'stats'} onClick={() => setActiveTab('stats')} />
+          <PcNavItem icon={Settings} label="设置" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
+
+          {/* 分类列表 */}
+          <div className="pt-3 mt-3 border-t border-border">
+            <div className="flex items-center justify-between px-2 mb-1">
+              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">分类</span>
+              <button className="text-[10px] text-violet-500 hover:underline" onClick={() => setActiveTab('categories')}>
+                全部
+              </button>
+            </div>
+            <PcCategoryItem
+              name="全部"
+              icon={Home}
+              active={!activeCategoryId}
+              onClick={() => { setActiveCategoryId(null); setActiveTab('home') }}
+            />
+            {categories.slice(0, 8).map(c => (
+              <PcCategoryItem
+                key={c.id}
+                name={c.name}
+                icon={Library}
+                color={c.color}
+                count={c.promptCount}
+                active={activeCategoryId === c.id}
+                onClick={() => { setActiveCategoryId(c.id); setActiveTab('home') }}
+              />
+            ))}
+          </div>
+
+          {/* 收藏夹列表 */}
+          {collections.length > 0 && (
+            <div className="pt-3 mt-3 border-t border-border">
+              <div className="flex items-center justify-between px-2 mb-1">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">收藏夹</span>
+                <button className="text-[10px] text-violet-500 hover:underline" onClick={() => setActiveTab('collections')}>
+                  管理
+                </button>
+              </div>
+              {collections.map(c => (
+                <PcCategoryItem
+                  key={c.id}
+                  name={c.name}
+                  icon={FolderOpen}
+                  color={c.color}
+                  count={c.promptCount}
+                  active={activeCollectionId === c.id}
+                  onClick={() => { setActiveCollectionId(c.id); setActiveTab('home') }}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* 标签云 */}
+          {tags.length > 0 && (
+            <div className="pt-3 mt-3 border-t border-border">
+              <div className="px-2 mb-2">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">标签</span>
+              </div>
+              <div className="flex flex-wrap gap-1 px-1">
+                {tags.slice(0, 12).map(t => (
+                  <button
+                    key={t.name}
+                    onClick={() => { setActiveTag(t.name); setActiveTab('home') }}
+                    className={cn(
+                      'px-2 py-0.5 rounded-full text-[10px] touch-feedback',
+                      activeTag === t.name ? 'bg-violet-500 text-white' : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                    )}
+                  >
+                    #{t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </nav>
+
+        {/* 底部操作 */}
+        <div className="p-3 border-t border-border space-y-1">
+          {/* AI 热门进度提示 */}
+          {hotProgress && (
+            <div className="px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 text-xs text-violet-700 dark:text-violet-300 mb-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                {hotProgress.stage === 'done' ? (
+                  <Check className="w-3 h-3" />
+                ) : (
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                )}
+                <span className="font-medium">{hotProgress.stage === 'done' ? '完成' : 'AI 热门搜索中'}</span>
+              </div>
+              <div className="text-[10px] opacity-80">{hotProgress.message}</div>
+            </div>
+          )}
+          {/* 去变量进度 */}
+          {removeVarsProgress && (
+            <div className="px-3 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 text-xs text-emerald-700 dark:text-emerald-300 mb-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span className="font-medium">重写变量中 {removeVarsProgress.current}/{removeVarsProgress.total}</span>
+              </div>
+              <div className="text-[10px] opacity-80 truncate">{removeVarsProgress.title}</div>
+            </div>
+          )}
+          <PcNavItem
+            icon={SearchIcon}
+            label="AI 搜索提示词"
+            onClick={() => setAiSearchOpen(true)}
+          />
+          <PcNavItem
+            icon={Flame}
+            label={fetchingHot ? '热门搜索中...' : 'AI 热门搜索'}
+            onClick={handleFetchHot}
+          />
+          <PcNavItem icon={Wand2} label="AI 生成提示词" onClick={() => setAiGenerateOpen(true)} />
+          <PcNavItem icon={Cloud} label="跨设备同步" onClick={() => setSyncOpen(true)} />
+          <PcNavItem icon={Download} label="导入 / 导出" onClick={() => setImportExportOpen(true)} />
+          <PcNavItem icon={Palette} label="切换主题" onClick={() => setThemeOpen(true)} />
+          <PcNavItem
+            icon={authed ? UserIcon : LogIn}
+            label={authed ? (getCurrentUser()?.email || '账号') : '登录 / 注册'}
+            onClick={() => setAuthOpen(true)}
+          />
+          <div className="flex items-center justify-between px-2 pt-2 mt-1 border-t border-border/50">
+            <ThemeToggle />
+            <button
+              onClick={handleCheckUpdate}
+              disabled={manualChecking}
+              className="text-[10px] text-muted-foreground hover:text-violet-500 flex items-center gap-1 touch-feedback"
+            >
+              <RefreshCw className={cn('w-3 h-3', manualChecking && 'animate-spin')} />
+              {manualChecking ? '检查中...' : `v${APP_VERSION}`}
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ===== 移动端顶部栏 ===== */}
+      <header className="mobile-only safe-top sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border">
+        <div className="flex items-center gap-2 px-4 py-3">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold truncate">PromptHub 提示词库</h1>
+              <p className="text-[10px] text-muted-foreground truncate">
+                {activeCategoryName || activeCollectionName || (activeTag ? `#${activeTag}` : showFavoritesOnly ? '我的收藏' : '全部提示词')}
+              </p>
+            </div>
+          </div>
+          <ThemeToggle />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9"
+            onClick={() => setFilterOpen(true)}
+            aria-label="筛选"
+          >
+            <Menu className="w-5 h-5" />
+          </Button>
+        </div>
+
+        {/* 搜索栏（仅 home tab 显示） */}
+        {activeTab === 'home' && (
+          <div className="px-4 pb-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="搜索提示词标题、内容、作者..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 pr-9 h-10 rounded-full bg-muted/50 border-0"
+              />
+              {searchQuery && (
+                <button
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground touch-feedback"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* ===== PC 端顶部栏（搜索 + 操作） ===== */}
+      <header className="pc-only safe-top sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border h-16 items-center px-6 gap-4 pc-main-with-sidebar">
+        <div className="flex-1 max-w-2xl relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="搜索提示词标题、内容、作者..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-9 h-10 rounded-full bg-muted/50 border-0"
+          />
+          {searchQuery && (
+            <button
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setAiGenerateOpen(true)} className="hidden lg:flex">
+            <Wand2 className="w-4 h-4 mr-1" />AI 生成
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)} className="hidden lg:flex">
+            <Check className="w-4 h-4 mr-1" />批量
+          </Button>
+          <Button size="sm" onClick={handleNewPrompt} className="bg-violet-500 hover:bg-violet-600">
+            <Plus className="w-4 h-4 mr-1" />新建
+          </Button>
+        </div>
+      </header>
+
+      {/* ===== 主内容 ===== */}
+      <main className="flex-1 overflow-y-auto pb-24 lg:pb-6 pc-main-with-sidebar">
+        <div className="lg:max-w-6xl lg:mx-auto lg:px-6 lg:py-6">
+          {activeTab === 'home' && (
+            <HomeTab
+              prompts={prompts}
+              loading={loading}
+              error={error}
+              selectionMode={selectionMode}
+              selectedIds={selectedIds}
+              onToggleSelect={(id) => usePromptStore.getState().toggleSelected(id)}
+              onCardClick={(p) => {
+                if (selectionMode) {
+                  usePromptStore.getState().toggleSelected(p.id)
+                } else {
+                  selectPrompt(p)
+                  setDetailOpen(true)
+                }
+              }}
+              onCopy={handleCopyPrompt}
+              onEdit={handleEdit}
+              onShare={handleShare}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              hasFilter={!!hasActiveFilter}
+              onClearFilter={() => {
+                setActiveCategoryId(null)
+                setActiveCollectionId(null)
+                setActiveTag(null)
+                setShowFavoritesOnly(false)
+              }}
+              onBatchEdit={() => setBatchOpen(true)}
+              onExitSelectionMode={() => {
+                setSelectionMode(false)
+                clearSelection()
+              }}
+              onSelectAll={selectAll}
+              activeCategoryName={activeCategoryName}
+              activeCollectionName={activeCollectionName}
+              activeTag={activeTag}
+              categories={categories}
+            />
+          )}
+
+          {activeTab === 'categories' && (
+            <CategoriesTab
+              categories={categories}
+              tags={tags}
+              activeCategoryId={activeCategoryId}
+              activeTag={activeTag}
+              onSelectCategory={(id) => {
+                setActiveCategoryId(id)
+                setActiveTab('home')
+              }}
+              onSelectTag={(t) => {
+                setActiveTag(t)
+                setActiveTab('home')
+              }}
+            />
+          )}
+
+          {activeTab === 'collections' && (
+            <CollectionsTab
+              collections={collections}
+              onSelectCollection={(id) => {
+                setActiveCollectionId(id)
+                setActiveTab('home')
+              }}
+              onManage={() => setCollectionOpen(true)}
+            />
+          )}
+
+          {activeTab === 'stats' && <StatsTab />}
+
+          {activeTab === 'settings' && (
+            <SettingsTab
+              onImportExport={() => setImportExportOpen(true)}
+              onSync={() => setSyncOpen(true)}
+              onManageCollections={() => setCollectionOpen(true)}
+              onCheckUpdate={handleCheckUpdate}
+              manualChecking={manualChecking}
+              onThemeOpen={() => setThemeOpen(true)}
+              onAuthOpen={() => setAuthOpen(true)}
+              onFetchHot={handleFetchHot}
+              fetchingHot={fetchingHot}
+              onAISearchOpen={() => setAiSearchOpen(true)}
+              onRemoveVariables={handleRemoveVariables}
+              removingVars={removingVars}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* ===== 悬浮新建按钮（移动端） ===== */}
+      {activeTab === 'home' && !selectionMode && (
+        <button
+          onClick={handleNewPrompt}
+          className="mobile-only fixed right-4 bottom-24 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 text-white shadow-lg shadow-violet-500/30 flex items-center justify-center touch-feedback"
+          aria-label="新建提示词"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* ===== 底部 Tab Bar（仅移动端） ===== */}
+      <nav className="mobile-only safe-bottom fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-md border-t border-border">
+        <div className="flex items-center justify-around px-2 py-1">
+          <TabButton
+            icon={Home}
+            label="提示词"
+            active={activeTab === 'home'}
+            onClick={() => setActiveTab('home')}
+          />
+          <TabButton
+            icon={Library}
+            label="分类"
+            active={activeTab === 'categories'}
+            onClick={() => setActiveTab('categories')}
+          />
+          <TabButton
+            icon={FolderOpen}
+            label="收藏夹"
+            active={activeTab === 'collections'}
+            onClick={() => setActiveTab('collections')}
+          />
+          <TabButton
+            icon={BarChart3}
+            label="统计"
+            active={activeTab === 'stats'}
+            onClick={() => setActiveTab('stats')}
+          />
+          <TabButton
+            icon={Settings}
+            label="设置"
+            active={activeTab === 'settings'}
+            onClick={() => setActiveTab('settings')}
+          />
+        </div>
+      </nav>
+
+      {/* ===== 侧边筛选抽屉（仅移动端） ===== */}
+      <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+        <SheetContent side="right" className="w-[85vw] max-w-sm p-0">
+          <SheetHeader className="p-4 border-b">
+            <SheetTitle>筛选与操作</SheetTitle>
+          </SheetHeader>
+          <FilterDrawerContent
+            onClose={() => setFilterOpen(false)}
+            onAIGenerate={() => {
+              setFilterOpen(false)
+              setAiGenerateOpen(true)
+            }}
+            onAISearch={() => {
+              setFilterOpen(false)
+              setAiSearchOpen(true)
+            }}
+            onFetchHot={() => {
+              setFilterOpen(false)
+              handleFetchHot()
+            }}
+            onImportExport={() => {
+              setFilterOpen(false)
+              setImportExportOpen(true)
+            }}
+            onSync={() => {
+              setFilterOpen(false)
+              setSyncOpen(true)
+            }}
+            onBatchMode={() => {
+              setFilterOpen(false)
+              setSelectionMode(true)
+            }}
+            onManageCollections={() => {
+              setFilterOpen(false)
+              setCollectionOpen(true)
+            }}
+            onShowFavorites={() => {
+              setShowFavoritesOnly(!showFavoritesOnly)
+              setFilterOpen(false)
+              setActiveTab('home')
+            }}
+            showFavoritesOnly={showFavoritesOnly}
+          />
+        </SheetContent>
+      </Sheet>
+
+      {/* ===== 对话框 ===== */}
+      <PromptFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        editing={editing}
+      />
+      <PromptDetailSheet
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        onEdit={handleEdit}
+        onShare={handleShare}
+      />
+      <ImportExportDialog open={importExportOpen} onOpenChange={setImportExportOpen} />
+      <ShareDialog open={shareOpen} onOpenChange={setShareOpen} prompt={sharingPrompt} />
+      <BatchEditDialog
+        open={batchOpen}
+        onOpenChange={setBatchOpen}
+        selectedIds={Array.from(selectedIds)}
+      />
+      <CollectionManagerDialog open={collectionOpen} onOpenChange={setCollectionOpen} />
+      <CloudSyncDialog open={syncOpen} onOpenChange={setSyncOpen} />
+      <AIGenerateDialog
+        open={aiGenerateOpen}
+        onOpenChange={setAiGenerateOpen}
+        onApply={(data) => {
+          setEditing(null)
+          setFormOpen(true)
+          sessionStorage.setItem('prompthub_prefill', JSON.stringify(data))
+        }}
+      />
+      <UpdateDialog
+        open={updateCheck.open}
+        onOpenChange={updateCheck.setOpen}
+        updateInfo={updateCheck.updateInfo}
+      />
+      <ThemeSwitcher open={themeOpen} onOpenChange={setThemeOpen} />
+      <AuthDialog
+        open={authOpen}
+        onOpenChange={setAuthOpen}
+        onUserChange={() => setAuthed(isLoggedIn())}
+      />
+      <AISearchDialog open={aiSearchOpen} onOpenChange={setAiSearchOpen} />
+    </div>
+  )
+}
+
+// ============================================
+// PC 端 Sidebar 导航项
+// ============================================
+function PcNavItem({
+  icon: Icon, label, active, onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  active?: boolean
+  onClick?: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm touch-feedback text-left',
+        active
+          ? 'bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 font-medium'
+          : 'text-foreground hover:bg-muted/50',
+      )}
+    >
+      <Icon className="w-4 h-4 shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+    </button>
+  )
+}
+
+function PcCategoryItem({
+  name, icon: Icon, color, count, active, onClick,
+}: {
+  name: string
+  icon: React.ComponentType<{ className?: string }>
+  color?: string | null
+  count?: number
+  active?: boolean
+  onClick?: () => void
+}) {
+  const colorClass = getColorClass(color)
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] touch-feedback text-left',
+        active ? 'bg-violet-50 dark:bg-violet-950/30 font-medium' : 'hover:bg-muted/50',
+      )}
+    >
+      <div className={cn('w-5 h-5 rounded flex items-center justify-center shrink-0', colorClass.soft)}>
+        <Icon className={cn('w-3 h-3', colorClass.text)} />
+      </div>
+      <span className="flex-1 truncate">{name}</span>
+      {count !== undefined && count > 0 && (
+        <span className="text-[10px] text-muted-foreground">{count}</span>
+      )}
+    </button>
+  )
+}
+
+// ============================================
+// 底部 Tab 按钮
+// ============================================
+function TabButton({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg touch-feedback min-w-[60px]',
+        active ? 'text-violet-600 dark:text-violet-400' : 'text-muted-foreground',
+      )}
+    >
+      <Icon className={cn('w-5 h-5', active && 'scale-110')} />
+      <span className="text-[10px] font-medium">{label}</span>
+    </button>
+  )
+}
+
+// ============================================
+// 首页 Tab：提示词卡片网格
+// ============================================
+function HomeTab({
+  prompts, loading, error, selectionMode, selectedIds,
+  onToggleSelect, onCardClick, onCopy, onEdit, onShare,
+  sortBy, onSortChange, hasFilter, onClearFilter,
+  onBatchEdit, onExitSelectionMode, onSelectAll,
+  activeCategoryName, activeCollectionName, activeTag,
+  categories,
+}: {
+  prompts: Prompt[]
+  loading: boolean
+  error: string | null
+  selectionMode: boolean
+  selectedIds: Set<string>
+  onToggleSelect: (id: string) => void
+  onCardClick: (p: Prompt) => void
+  onCopy: (p: Prompt) => void
+  onEdit: (p: Prompt) => void
+  onShare: (p: Prompt) => void
+  sortBy: string
+  onSortChange: (s: any) => void
+  hasFilter: boolean
+  onClearFilter: () => void
+  onBatchEdit: () => void
+  onExitSelectionMode: () => void
+  onSelectAll: () => void
+  activeCategoryName?: string | null
+  activeCollectionName?: string | null
+  activeTag?: string | null
+  categories?: any[]
+}) {
+  const sortOptions: Array<{ value: any; label: string; icon: any }> = [
+    { value: 'pinned', label: '置顶优先', icon: Pin },
+    { value: 'recent', label: '最近更新', icon: Clock },
+    { value: 'usage', label: '使用最多', icon: TrendingUp },
+    { value: 'rating', label: '评分最高', icon: Star },
+  ]
+
+  const currentTitle = activeCategoryName || activeCollectionName || (activeTag ? `#${activeTag}` : '全部提示词')
+
+  if (selectionMode) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center justify-between p-4 bg-violet-50 dark:bg-violet-950/30 border-b">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onExitSelectionMode}>
+              <X className="w-4 h-4 mr-1" />退出
+            </Button>
+            <span className="text-sm font-medium">已选 {selectedIds.size} 项</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onSelectAll}>
+              全选
+            </Button>
+            <Button
+              size="sm"
+              disabled={selectedIds.size === 0}
+              onClick={onBatchEdit}
+            >
+              批量操作
+            </Button>
+          </div>
+        </div>
+        <PromptGrid
+          prompts={prompts}
+          loading={loading}
+          error={error}
+          selectionMode
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+          onCardClick={onCardClick}
+          onCopy={onCopy}
+          onEdit={onEdit}
+          onShare={onShare}
+          categories={categories || []}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="px-4 py-3 lg:px-0 lg:py-0">
+      {/* PC 端标题 */}
+      <div className="hidden lg:flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-2xl font-bold">{currentTitle}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{prompts.length} 条提示词</p>
+        </div>
+      </div>
+
+      {/* 排序与筛选 */}
+      <div className="flex items-center gap-2 mb-3 overflow-x-auto no-scrollbar lg:mb-4">
+        {sortOptions.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => onSortChange(opt.value)}
+            className={cn(
+              'flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap touch-feedback',
+              sortBy === opt.value
+                ? 'bg-violet-500 text-white'
+                : 'bg-muted text-muted-foreground hover:bg-muted/70',
+            )}
+          >
+            <opt.icon className="w-3 h-3" />
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {hasFilter && (
+        <div className="flex items-center gap-2 mb-3 text-xs">
+          <span className="text-muted-foreground">已筛选</span>
+          <button
+            onClick={onClearFilter}
+            className="px-2 py-0.5 rounded-full bg-muted text-foreground hover:bg-muted/70 touch-feedback flex items-center gap-1"
+          >
+            <X className="w-3 h-3" />清除
+          </button>
+        </div>
+      )}
+
+      <PromptGrid
+        prompts={prompts}
+        loading={loading}
+        error={error}
+        selectionMode={false}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
+        onCardClick={onCardClick}
+        onCopy={onCopy}
+        onEdit={onEdit}
+        onShare={onShare}
+        categories={categories || []}
+      />
+    </div>
+  )
+}
+
+function PromptGrid({
+  prompts, loading, error, selectionMode, selectedIds,
+  onToggleSelect, onCardClick, onCopy, onEdit, onShare,
+  categories,
+}: {
+  prompts: Prompt[]
+  loading: boolean
+  error: string | null
+  selectionMode: boolean
+  selectedIds: Set<string>
+  onToggleSelect: (id: string) => void
+  onCardClick: (p: Prompt) => void
+  onCopy: (p: Prompt) => void
+  onEdit: (p: Prompt) => void
+  onShare: (p: Prompt) => void
+  categories: any[]
+}) {
+  if (loading && prompts.length === 0) {
+    return (
+      <div className="grid pc-grid-2 lg:pc-grid-3 gap-3">
+        {[1,2,3,4,5,6].map(i => (
+          <Skeleton key={i} className="h-32 w-full rounded-xl" />
+        ))}
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="text-center py-12 text-muted-foreground">
+        <p className="text-sm">{error}</p>
+      </div>
+    )
+  }
+  if (prompts.length === 0) {
+    return (
+      <div className="text-center py-16 px-6">
+        <Package className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+        <p className="text-base font-medium mb-1">还没有提示词</p>
+        <p className="text-xs text-muted-foreground">点击右下角 + 新建第一条</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid pc-grid-2 lg:pc-grid-3 gap-3">
+      {prompts.map(p => (
+        <PromptCardMobile
+          key={p.id}
+          prompt={p}
+          selectionMode={selectionMode}
+          selected={selectedIds.has(p.id)}
+          onToggleSelect={() => onToggleSelect(p.id)}
+          onClick={() => onCardClick(p)}
+          onCopy={() => onCopy(p)}
+          onEdit={() => onEdit(p)}
+          onShare={() => onShare(p)}
+          categories={categories}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ============================================
+// 移动端提示词卡片
+// ============================================
+// 全局分类查找缓存（避免每张卡片都遍历分类树）
+const categoryCache = new Map<string, any>()
+let lastCategoryRef: any = null
+
+function findCategoryById(categories: any[], id: string | null): any {
+  if (!id) return null
+  // 缓存命中
+  if (categoryCache.has(id)) return categoryCache.get(id)
+  const find = (cats: any[]): any => {
+    for (const c of cats) {
+      if (c.id === id) return c
+      if (c.children) {
+        const sub = find(c.children)
+        if (sub) return sub
+      }
+    }
+    return null
+  }
+  const result = find(categories)
+  categoryCache.set(id, result)
+  return result
+}
+
+function PromptCardMobile({
+  prompt, selectionMode, selected, onToggleSelect, onClick, onCopy, onEdit, onShare,
+  categories,
+}: {
+  prompt: Prompt
+  selectionMode: boolean
+  selected: boolean
+  onToggleSelect: () => void
+  onClick: () => void
+  onCopy: () => void
+  onEdit: () => void
+  onShare: () => void
+  categories: any[]
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+  // 使用缓存查找分类
+  const category = React.useMemo(() => findCategoryById(categories, prompt.categoryId), [categories, prompt.categoryId])
+
+  const color = getColorClass(category?.color)
+
+  const handleCardClick = () => {
+    if (selectionMode) {
+      onToggleSelect()
+    } else if (expanded) {
+      // 已展开时点击标题区折叠
+      setExpanded(false)
+    } else {
+      // 折叠时点击展开（不打开详情抽屉）
+      setExpanded(true)
+    }
+  }
+
+  return (
+    <div
+      className={cn(
+        'relative rounded-xl border bg-card p-4 touch-feedback prompt-card-pc transition-all',
+        selected ? 'border-violet-500 ring-2 ring-violet-500/30' : 'border-border hover:border-primary/30',
+        prompt.isPinned && 'ring-1 ring-amber-400/40',
+        expanded && 'shadow-md',
+      )}
+    >
+      {/* 背景色（如有） */}
+      {prompt.background && prompt.background.type === 'color' && (
+        <div
+          className="absolute inset-0 rounded-xl opacity-10 pointer-events-none"
+          style={{ background: prompt.background.value }}
+        />
+      )}
+
+      <div className="relative">
+        {/* 标题行（点击折叠/展开） */}
+        <div
+          className="flex items-start gap-2 mb-1.5 cursor-pointer"
+          onClick={handleCardClick}
+        >
+          {selectionMode && (
+            <div className={cn(
+              'mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0',
+              selected ? 'bg-violet-500 border-violet-500' : 'border-muted-foreground/30',
+            )}>
+              {selected && <Check className="w-3 h-3 text-white" />}
+            </div>
+          )}
+          {/* 分类色条 */}
+          {category && (
+            <div className={cn('mt-1.5 w-1 h-4 rounded-full shrink-0', color.dot)} />
+          )}
+          <h3 className={cn(
+            'flex-1 font-bold leading-tight transition-colors',
+            'text-[15px] lg:text-base',
+            'text-foreground hover:text-primary',
+          )}>
+            {prompt.title}
+          </h3>
+          {prompt.isPinned && (
+            <Pin className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0 mt-0.5" />
+          )}
+          {prompt.isFavorite && (
+            <Star className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0 mt-0.5" />
+          )}
+          {!selectionMode && (
+            <ChevronRight className={cn(
+              'w-4 h-4 text-muted-foreground shrink-0 mt-1 transition-transform',
+              expanded && 'rotate-90',
+            )} />
+          )}
+        </div>
+
+        {/* 描述（醒目柔和） */}
+        {prompt.description && (
+          <p
+            className="text-[13px] text-muted-foreground mb-2 leading-relaxed cursor-pointer"
+            onClick={handleCardClick}
+          >
+            {prompt.description}
+          </p>
+        )}
+
+        {/* 内容（默认折叠，点击展开后显示） */}
+        {expanded && !selectionMode && (
+          <div className="mb-3 mt-2 p-3 rounded-lg bg-muted/40 border border-border/50">
+            <pre className="text-xs text-foreground/80 whitespace-pre-wrap font-mono leading-relaxed max-h-80 overflow-y-auto">
+              {prompt.content}
+            </pre>
+            {/* 变量提示 */}
+            {prompt.content.includes('{{') && (
+              <div className="mt-2 text-[10px] text-muted-foreground">
+                {'💡 含 {{变量}} 占位符，点击详情可填充'}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 标签 + 元数据 */}
+        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+          {category && (
+            <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-5', color.text, color.border)}>
+              {category.name}
+            </Badge>
+          )}
+          {(prompt.tags || []).slice(0, 3).map(t => (
+            <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0 h-5">
+              #{t}
+            </Badge>
+          ))}
+          {(prompt.tags || []).length > 3 && (
+            <span className="text-[10px] text-muted-foreground">+{(prompt.tags || []).length - 3}</span>
+          )}
+        </div>
+
+        {/* 底部操作行 */}
+        <div className="flex items-center justify-between pt-2 border-t border-border/50">
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            {prompt.rating > 0 && (
+              <span className="flex items-center gap-0.5">
+                <Star className="w-3 h-3 text-amber-500 fill-amber-500" />
+                {prompt.rating}
+              </span>
+            )}
+            <span className="flex items-center gap-0.5">
+              <TrendingUp className="w-3 h-3" />
+              {prompt.usageCount}
+            </span>
+            {prompt.author && (
+              <span className="text-fade-1 max-w-[80px]">@{prompt.author}</span>
+            )}
+          </div>
+          {!selectionMode && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={(e) => { e.stopPropagation(); onCopy() }}
+                className="p-1.5 rounded-md hover:bg-muted touch-feedback"
+                aria-label="复制"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit() }}
+                className="p-1.5 rounded-md hover:bg-muted touch-feedback"
+                aria-label="编辑"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>
+                </svg>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onShare() }}
+                className="p-1.5 rounded-md hover:bg-muted touch-feedback"
+                aria-label="分享"
+              >
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="18" cy="5" r="3"/>
+                  <circle cx="6" cy="12" r="3"/>
+                  <circle cx="18" cy="19" r="3"/>
+                  <path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
+                </svg>
+              </button>
+              {/* 查看详情按钮（始终显示） */}
+              <button
+                onClick={(e) => { e.stopPropagation(); onClick() }}
+                className="p-1.5 rounded-md hover:bg-muted touch-feedback text-primary"
+                aria-label="查看详情"
+                title="查看详情（含 AI 自动填充变量）"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================
+// 分类 Tab
+// ============================================
+function CategoriesTab({
+  categories, tags, activeCategoryId, activeTag,
+  onSelectCategory, onSelectTag,
+}: {
+  categories: any[]
+  tags: Array<{ name: string; count: number }>
+  activeCategoryId: string | null
+  activeTag: string | null
+  onSelectCategory: (id: string | null) => void
+  onSelectTag: (t: string) => void
+}) {
+  return (
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-3xl">
+      <div>
+        <h2 className="text-sm font-bold mb-2 text-muted-foreground lg:text-xl lg:font-bold lg:text-foreground">分类</h2>
+        <div className="space-y-1.5">
+          <CategoryRow
+            name="全部提示词"
+            icon={Home}
+            color="violet"
+            active={!activeCategoryId}
+            onClick={() => onSelectCategory(null)}
+          />
+          {categories.map(cat => (
+            <div key={cat.id}>
+              <CategoryRow
+                name={cat.name}
+                description={cat.description}
+                icon={Library}
+                color={cat.color}
+                count={cat.promptCount}
+                active={activeCategoryId === cat.id}
+                onClick={() => onSelectCategory(cat.id)}
+              />
+              {cat.children && cat.children.length > 0 && (
+                <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
+                  {cat.children.map((sub: any) => (
+                    <CategoryRow
+                      key={sub.id}
+                      name={sub.name}
+                      icon={ChevronRight}
+                      color={sub.color}
+                      count={sub.promptCount}
+                      active={activeCategoryId === sub.id}
+                      onClick={() => onSelectCategory(sub.id)}
+                      small
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {tags.length > 0 && (
+        <div>
+          <h2 className="text-sm font-bold mb-2 text-muted-foreground">标签云</h2>
+          <div className="flex flex-wrap gap-2">
+            {tags.map(t => (
+              <button
+                key={t.name}
+                onClick={() => onSelectTag(t.name)}
+                className={cn(
+                  'px-3 py-1.5 rounded-full text-xs touch-feedback',
+                  activeTag === t.name
+                    ? 'bg-violet-500 text-white'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                #{t.name} <span className="opacity-60">{t.count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CategoryRow({
+  name, description, icon: Icon, color, count, active, onClick, small,
+}: {
+  name: string
+  description?: string | null
+  icon: React.ComponentType<{ className?: string }>
+  color?: string | null
+  count?: number
+  active: boolean
+  onClick: () => void
+  small?: boolean
+}) {
+  const colorClass = getColorClass(color)
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full flex items-center gap-2.5 rounded-lg touch-feedback text-left',
+        small ? 'py-1.5 px-2' : 'p-2.5',
+        active ? 'bg-violet-50 dark:bg-violet-950/30' : 'hover:bg-muted/50',
+      )}
+    >
+      <div className={cn(
+        'rounded-md flex items-center justify-center shrink-0',
+        small ? 'w-6 h-6' : 'w-8 h-8',
+        colorClass.soft,
+      )}>
+        <Icon className={cn(small ? 'w-3.5 h-3.5' : 'w-4 h-4', colorClass.text)} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className={cn('font-medium truncate', small ? 'text-xs' : 'text-sm')}>{name}</div>
+        {description && !small && (
+          <div className="text-[10px] text-muted-foreground truncate">{description}</div>
+        )}
+      </div>
+      {count !== undefined && (
+        <Badge variant="secondary" className="text-[10px] h-5">{count}</Badge>
+      )}
+    </button>
+  )
+}
+
+// ============================================
+// 收藏夹 Tab
+// ============================================
+function CollectionsTab({
+  collections, onSelectCollection, onManage,
+}: {
+  collections: any[]
+  onSelectCollection: (id: string) => void
+  onManage: () => void
+}) {
+  return (
+    <div className="px-4 py-3 lg:px-0 lg:py-0 lg:max-w-3xl">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold lg:text-xl">收藏夹</h2>
+        <Button variant="ghost" size="sm" onClick={onManage}>
+          <Settings className="w-4 h-4 mr-1" />管理
+        </Button>
+      </div>
+      {collections.length === 0 ? (
+        <div className="text-center py-12">
+          <Folder className="w-10 h-10 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-muted-foreground mb-3">还没有收藏夹</p>
+          <Button size="sm" onClick={onManage}>创建收藏夹</Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {collections.map(c => {
+            const color = getColorClass(c.color)
+            return (
+              <button
+                key={c.id}
+                onClick={() => onSelectCollection(c.id)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl border border-border bg-card touch-feedback text-left"
+              >
+                <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center', color.soft)}>
+                  <Folder className={cn('w-5 h-5', colorClass(c))} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate">{c.name}</div>
+                  {c.description && (
+                    <div className="text-xs text-muted-foreground truncate">{c.description}</div>
+                  )}
+                </div>
+                <Badge variant="secondary" className="h-5">{c.promptCount}</Badge>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function colorClass(c: any) {
+  return getColorClass(c.color).text
+}
+
+// ============================================
+// 统计 Tab
+// ============================================
+function StatsTab() {
+  const fetchStats = usePromptStore(s => s.fetchStats)
+  const [stats, setStats] = React.useState<any>(null)
+
+  React.useEffect(() => {
+    fetchStats().then(setStats)
+  }, [fetchStats])
+
+  if (!stats) {
+    return <div className="p-4"><Skeleton className="h-32 w-full" /></div>
+  }
+
+  return (
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-3xl">
+      <h2 className="text-sm font-bold lg:text-2xl">数据统计</h2>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard label="提示词总数" value={stats.total} icon={Package} color="violet" />
+        <StatCard label="收藏" value={stats.favorites} icon={Star} color="amber" />
+        <StatCard label="置顶" value={stats.pinned} icon={Pin} color="rose" />
+        <StatCard label="总使用次数" value={stats.totalUsage} icon={TrendingUp} color="emerald" />
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium">平均评分</span>
+          <span className="text-2xl font-bold text-amber-500">{stats.avgRating}</span>
+        </div>
+        <div className="flex items-center gap-0.5">
+          {[1,2,3,4,5].map(i => (
+            <Star
+              key={i}
+              className={cn(
+                'w-4 h-4',
+                i <= Math.round(stats.avgRating) ? 'text-amber-500 fill-amber-500' : 'text-muted-foreground/30',
+              )}
+            />
+          ))}
+        </div>
+      </div>
+
+      {stats.topTags && stats.topTags.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium mb-2">热门标签 Top 10</h3>
+          <div className="flex flex-wrap gap-2">
+            {stats.topTags.map((t: any) => (
+              <Badge key={t.name} variant="secondary" className="text-xs">
+                #{t.name} <span className="ml-1 opacity-60">{t.count}</span>
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StatCard({
+  label, value, icon: Icon, color,
+}: {
+  label: string
+  value: number
+  icon: React.ComponentType<{ className?: string }>
+  color: string
+}) {
+  const colorClass = getColorClass(color)
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center mb-2', colorClass.soft)}>
+        <Icon className={cn('w-4 h-4', colorClass.text)} />
+      </div>
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+    </div>
+  )
+}
+
+// ============================================
+// 设置 Tab
+// ============================================
+function SettingsTab({
+  onImportExport, onSync, onManageCollections, onCheckUpdate, manualChecking,
+  onThemeOpen, onAuthOpen, onFetchHot, fetchingHot,
+  onAISearchOpen, onRemoveVariables, removingVars,
+}: {
+  onImportExport: () => void
+  onSync: () => void
+  onManageCollections: () => void
+  onCheckUpdate?: () => void
+  manualChecking?: boolean
+  onThemeOpen?: () => void
+  onAuthOpen?: () => void
+  onFetchHot?: () => void
+  fetchingHot?: boolean
+  onAISearchOpen?: () => void
+  onRemoveVariables?: () => void
+  removingVars?: boolean
+}) {
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
+
+  return (
+    <div className="px-4 py-3 space-y-4 lg:px-0 lg:py-0 lg:max-w-2xl">
+      <h2 className="text-sm font-bold lg:text-2xl">设置</h2>
+
+      {/* 主题 */}
+      <SettingsSection title="外观">
+        <SettingsRow
+          icon={mounted && theme === 'dark' ? Moon : Sun}
+          title="深色模式"
+          right={
+            <button
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className={cn(
+                'w-12 h-7 rounded-full p-0.5 transition-colors',
+                theme === 'dark' ? 'bg-violet-500' : 'bg-muted',
+              )}
+            >
+              <div className={cn(
+                'w-6 h-6 rounded-full bg-white transition-transform',
+                theme === 'dark' ? 'translate-x-5' : '',
+              )} />
+            </button>
+          }
+        />
+        {onThemeOpen && (
+          <SettingsRow
+            icon={Palette}
+            title="切换主题（10 套）"
+            subtitle="墨黑/樱花/薄荷/夕阳/深海/薰衣草/咖啡/雪白/丛林/玫瑰"
+            onClick={onThemeOpen}
+          />
+        )}
+      </SettingsSection>
+
+      {/* 账号 */}
+      {onAuthOpen && (
+        <SettingsSection title="账号">
+          <SettingsRow
+            icon={UserIcon}
+            title={isLoggedIn() ? (getCurrentUser()?.email || '已登录') : '登录 / 注册'}
+            subtitle={isLoggedIn() ? '点击查看账号信息或登出' : '邮箱+密码，可跨设备同步数据'}
+            onClick={onAuthOpen}
+          />
+        </SettingsSection>
+      )}
+
+      {/* AI 搜索 */}
+      {onFetchHot && (
+        <SettingsSection title="AI 搜索">
+          {onAISearchOpen && (
+            <SettingsRow
+              icon={SearchIcon}
+              title="AI 按关键词搜索提示词"
+              subtitle="输入关键词（如 codex），返回常用10/热门10/高评价10 共 30 条"
+              onClick={onAISearchOpen}
+            />
+          )}
+          <SettingsRow
+            icon={Flame}
+            title="AI 自动搜索热门提示词"
+            subtitle={fetchingHot ? '正在搜索 50 条热门...' : '生成 50 条当月热门，按分类自动保存'}
+            onClick={onFetchHot}
+          />
+          {onRemoveVariables && (
+            <SettingsRow
+              icon={Wand}
+              title="一键去除所有变量"
+              subtitle={removingVars ? '正在重写...' : '把已存在的 {{变量}} 提示词重写为完整版'}
+              onClick={onRemoveVariables}
+            />
+          )}
+        </SettingsSection>
+      )}
+
+      {/* AI 配置 */}
+      <AIConfigSection />
+
+      {/* 数据管理 */}
+      <SettingsSection title="数据">
+        <SettingsRow
+          icon={Download}
+          title="导入 / 导出"
+          subtitle="备份或恢复提示词库"
+          onClick={onImportExport}
+        />
+        <SettingsRow
+          icon={Cloud}
+          title="跨设备云同步"
+          subtitle="用同步码在多设备间同步"
+          onClick={onSync}
+        />
+        <SettingsRow
+          icon={FolderOpen}
+          title="收藏夹管理"
+          onClick={onManageCollections}
+        />
+      </SettingsSection>
+
+      {/* 危险操作 */}
+      <SettingsSection title="数据管理">
+        <SettingsRow
+          icon={Trash2}
+          title="清空所有提示词"
+          subtitle="删除全部提示词，保留分类和收藏夹"
+          onClick={() => {
+            if (confirm('确定清空所有提示词？此操作无法撤销。')) {
+              usePromptStore.getState().prompts.forEach(p => {
+                usePromptStore.getState().deletePrompt(p.id)
+              })
+              toast({ title: '已清空所有提示词' })
+            }
+          }}
+        />
+        <SettingsRow
+          icon={Trash2}
+          title="清空 AI 搜索结果"
+          subtitle="删除所有 AI 热门/搜索生成的提示词"
+          onClick={() => {
+            if (confirm('确定清空所有 AI 搜索结果？')) {
+              const all = usePromptStore.getState().prompts
+              const aiPrompts = all.filter(p => p.author === 'AI 热门' || p.author === 'AI 搜索')
+              aiPrompts.forEach(p => usePromptStore.getState().deletePrompt(p.id))
+              toast({ title: `已删除 ${aiPrompts.length} 条 AI 搜索结果` })
+            }
+          }}
+        />
+        <SettingsRow
+          icon={Trash2}
+          title="重置所有数据"
+          subtitle="清空全部数据并重新初始化（含分类、收藏夹）"
+          onClick={async () => {
+            if (!confirm('确定重置所有数据？此操作无法撤销，所有提示词、分类、收藏夹都会被删除！')) return
+            if (!confirm('再次确认：真的要删除所有数据吗？')) return
+            const { resetDB } = await import('@/lib/client/db')
+            await resetDB()
+            if (typeof localStorage !== 'undefined') {
+              localStorage.removeItem('prompthub_seeded_v1')
+              localStorage.removeItem('prompthub_seeded_v2')
+              localStorage.removeItem('prompthub_hot_cache')
+            }
+            window.location.reload()
+          }}
+        />
+      </SettingsSection>
+
+      {/* 关于 / 更新 */}
+      <SettingsSection title="关于">
+        {onCheckUpdate && (
+          <SettingsRow
+            icon={RefreshCw}
+            title="检查更新"
+            subtitle={manualChecking ? '正在检查...' : `当前版本 v${APP_VERSION}`}
+            onClick={onCheckUpdate}
+          />
+        )}
+        <SettingsRow
+          icon={ExternalLink}
+          title="GitHub 仓库"
+          subtitle={GITHUB_REPO}
+          onClick={() => window.open(`https://github.com/${GITHUB_REPO}`, '_blank', 'noopener,noreferrer')}
+        />
+        <SettingsRow
+          icon={Monitor}
+          title="PC 在线版"
+          subtitle={`访问 https://wolf28014.github.io/${GITHUB_REPO.split('/')[1]}/`}
+          onClick={() => window.open(`https://wolf28014.github.io/${GITHUB_REPO.split('/')[1]}/`, '_blank', 'noopener,noreferrer')}
+        />
+      </SettingsSection>
+
+      <div className="text-center text-[10px] text-muted-foreground/60 pt-4">
+        PromptHub v{APP_VERSION} · 安卓 + Web 通用版
+      </div>
+    </div>
+  )
+}
+
+function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 className="text-xs font-medium text-muted-foreground mb-2 px-1">{title}</h3>
+      <div className="rounded-xl border border-border bg-card overflow-hidden divide-y divide-border">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function SettingsRow({
+  icon: Icon, title, subtitle, right, onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  subtitle?: string
+  right?: React.ReactNode
+  onClick?: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick && !right}
+      className={cn(
+        'w-full flex items-center gap-3 p-3 text-left',
+        onClick && 'touch-feedback hover:bg-muted/50',
+      )}
+    >
+      <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{title}</div>
+        {subtitle && <div className="text-[11px] text-muted-foreground">{subtitle}</div>}
+      </div>
+      {right ?? (onClick && <ChevronRight className="w-4 h-4 text-muted-foreground" />)}
+    </button>
+  )
+}
+
+// ============================================
+// AI 配置区
+// ============================================
+// ============================================
+// 预设 AI 模型列表
+// ============================================
+const AI_PRESETS: Array<{
+  id: string
+  name: string
+  baseUrl: string
+  models: string[]
+  defaultModel: string
+  description: string
+  emoji: string
+  website?: string
+}> = [
+  {
+    id: 'zai',
+    name: 'Z.ai 智谱',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    models: ['glm-4.6', 'glm-4-plus', 'glm-4-flash', 'glm-4-air'],
+    defaultModel: 'glm-4.6',
+    description: '国产大模型，免费额度多，中文表现优秀',
+    emoji: '🤖',
+    website: 'https://z.ai',
+  },
+  {
+    id: 'agnes',
+    name: 'Agnes AI',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+    models: ['agnes-2.0-flash'],
+    defaultModel: 'agnes-2.0-flash',
+    description: 'Agnes AI 模型，快速响应',
+    emoji: '✨',
+    website: 'https://agnes-ai.com',
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1-mini', 'o1-preview'],
+    defaultModel: 'gpt-4o-mini',
+    description: 'GPT 系列，效果最好但需海外网络',
+    emoji: '🟢',
+    website: 'https://platform.openai.com',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner'],
+    defaultModel: 'deepseek-chat',
+    description: '国产，性价比高，代码能力强',
+    emoji: '🔵',
+    website: 'https://platform.deepseek.com',
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    defaultModel: 'moonshot-v1-8k',
+    description: 'Kimi，长上下文，中文友好',
+    emoji: '🌙',
+    website: 'https://platform.moonshot.cn',
+  },
+  {
+    id: 'qwen',
+    name: '通义千问',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
+    defaultModel: 'qwen-turbo',
+    description: '阿里通义千问，国产大模型',
+    emoji: '🟠',
+    website: 'https://dashscope.console.aliyun.com',
+  },
+  {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    baseUrl: 'https://api.anthropic.com/v1',
+    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+    defaultModel: 'claude-3-5-sonnet-20241022',
+    description: 'Claude，长文写作擅长',
+    emoji: '🟣',
+    website: 'https://console.anthropic.com',
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    baseUrl: '',
+    models: [],
+    defaultModel: '',
+    description: '兼容 OpenAI 协议的任意端点',
+    emoji: '⚙️',
+  },
+]
+
+function AIConfigSection() {
+  const [config, setConfig] = React.useState<AIConfig>(getAIConfig())
+  const [open, setOpen] = React.useState(false)
+  const [selectedPreset, setSelectedPreset] = React.useState<string>('')
+
+  // 根据当前 config 推断已选预设
+  React.useEffect(() => {
+    if (open) {
+      const preset = AI_PRESETS.find(p =>
+        p.id !== 'custom' && p.baseUrl === config.baseUrl
+      )
+      setSelectedPreset(preset?.id || 'custom')
+    }
+  }, [open, config.baseUrl])
+
+  // 切换预设时自动填入 baseUrl 和默认 model
+  const handlePresetSelect = (presetId: string) => {
+    setSelectedPreset(presetId)
+    const preset = AI_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+    setConfig(c => ({
+      ...c,
+      baseUrl: preset.baseUrl,
+      model: preset.defaultModel,
+    }))
+  }
+
+  return (
+    <SettingsSection title="AI 配置">
+      <SettingsRow
+        icon={Wand2}
+        title="AI API 配置"
+        subtitle={config.apiKey ? `已配置 · ${config.model}` : '未配置（AI 功能不可用）'}
+        onClick={() => setOpen(true)}
+      />
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="w-4 h-4 text-violet-500" />
+              AI API 配置
+            </DialogTitle>
+            <DialogDescription>
+              选择预设模型快速配置，或自定义兼容 OpenAI 协议的端点
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* 预设模型选择 */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                选择 AI 模型提供商
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {AI_PRESETS.map(preset => (
+                  <button
+                    key={preset.id}
+                    onClick={() => handlePresetSelect(preset.id)}
+                    className={cn(
+                      'flex items-start gap-2 p-2.5 rounded-lg border-2 touch-feedback text-left transition-all',
+                      selectedPreset === preset.id
+                        ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/30'
+                        : 'border-border hover:border-violet-300',
+                    )}
+                  >
+                    <span className="text-lg leading-none mt-0.5">{preset.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold truncate">{preset.name}</div>
+                      <div className="text-[10px] text-muted-foreground line-clamp-2 leading-tight mt-0.5">
+                        {preset.description}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 当前预设详情 */}
+            {selectedPreset && selectedPreset !== 'custom' && (
+              <div className="rounded-lg bg-muted/40 border border-border p-2.5 text-[11px]">
+                {(() => {
+                  const preset = AI_PRESETS.find(p => p.id === selectedPreset)!
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">{preset.emoji}</span>
+                        <span className="font-bold text-foreground">{preset.name}</span>
+                        {preset.website && (
+                          <a
+                            href={preset.website}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-violet-500 ml-auto text-[10px] hover:underline"
+                          >
+                            申请 Key ↗
+                          </a>
+                        )}
+                      </div>
+                      <div className="text-muted-foreground">{preset.description}</div>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+
+            {/* API Key */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">API Key</label>
+              <Input
+                type="password"
+                value={config.apiKey}
+                onChange={e => setConfig(c => ({ ...c, apiKey: e.target.value }))}
+                placeholder="sk-..."
+                className="mt-1"
+              />
+            </div>
+
+            {/* Base URL */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                Base URL
+                {selectedPreset !== 'custom' && (
+                  <span className="ml-1 text-[10px] text-violet-500">（来自预设，可修改）</span>
+                )}
+              </label>
+              <Input
+                value={config.baseUrl}
+                onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))}
+                placeholder="https://api.z.ai/api/paas/v4"
+                className="mt-1 font-mono text-xs"
+              />
+            </div>
+
+            {/* 模型选择 */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">
+                模型
+                {selectedPreset !== 'custom' && (
+                  <span className="ml-1 text-[10px] text-violet-500">（点选或手动输入）</span>
+                )}
+              </label>
+              {selectedPreset !== 'custom' && AI_PRESETS.find(p => p.id === selectedPreset)?.models.length ? (
+                <>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5 mb-1.5">
+                    {AI_PRESETS.find(p => p.id === selectedPreset)!.models.map(m => (
+                      <button
+                        key={m}
+                        onClick={() => setConfig(c => ({ ...c, model: m }))}
+                        className={cn(
+                          'px-2 py-1 rounded-md text-[11px] font-mono touch-feedback transition-colors',
+                          config.model === m
+                            ? 'bg-violet-500 text-white'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                        )}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                  <Input
+                    value={config.model}
+                    onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
+                    placeholder="模型名"
+                    className="font-mono text-xs"
+                  />
+                </>
+              ) : (
+                <Input
+                  value={config.model}
+                  onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
+                  placeholder="模型名"
+                  className="mt-1 font-mono text-xs"
+                />
+              )}
+            </div>
+
+            <div className="text-[11px] text-muted-foreground bg-muted/50 p-2.5 rounded-md leading-relaxed">
+              <div className="font-medium text-foreground mb-1">💡 使用提示</div>
+              <ul className="space-y-0.5 list-disc list-inside">
+                <li>选择上方预设可一键填入 Base URL 和推荐模型</li>
+                <li>所有兼容 OpenAI 协议的端点都可使用</li>
+                <li>API Key 仅保存在本地，不会上传</li>
+                <li>不同模型计费不同，请参考各平台定价</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)}>取消</Button>
+            <Button
+              onClick={() => {
+                setAIConfig(config)
+                setOpen(false)
+              }}
+              className="bg-violet-500 hover:bg-violet-600"
+            >
+              保存配置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SettingsSection>
+  )
+}
+
+// ============================================
+// 筛选抽屉内容
+// ============================================
+function FilterDrawerContent({
+  onClose, onAIGenerate, onAISearch, onFetchHot, onImportExport, onSync, onBatchMode, onManageCollections, onShowFavorites, showFavoritesOnly,
+}: {
+  onClose: () => void
+  onAIGenerate: () => void
+  onAISearch?: () => void
+  onFetchHot?: () => void
+  onImportExport: () => void
+  onSync: () => void
+  onBatchMode: () => void
+  onManageCollections: () => void
+  onShowFavorites: () => void
+  showFavoritesOnly: boolean
+}) {
+  const aiConfigured = isAIConfigured()
+  return (
+    <div className="p-2">
+      {onAISearch && (
+        <DrawerItem icon={SearchIcon} label="AI 搜索提示词" subtitle={aiConfigured ? '按关键词搜 30 条' : '需先配置 AI API'} onClick={onAISearch} />
+      )}
+      {onFetchHot && (
+        <DrawerItem icon={Flame} label="AI 热门搜索" subtitle={aiConfigured ? '50 条当月热门' : '需先配置 AI API'} onClick={onFetchHot} />
+      )}
+      <DrawerItem icon={Wand2} label="AI 生成提示词" subtitle={aiConfigured ? '用 AI 帮你写提示词' : '需先配置 AI API'} onClick={onAIGenerate} />
+      <DrawerItem icon={Star} label="我的收藏" subtitle={showFavoritesOnly ? '正在显示' : '查看收藏的提示词'} onClick={onShowFavorites} />
+      <DrawerItem icon={Check} label="批量编辑模式" subtitle="多选后批量加标签/删除" onClick={onBatchMode} />
+      <DrawerItem icon={FolderOpen} label="收藏夹管理" subtitle="创建或删除收藏夹" onClick={onManageCollections} />
+      <DrawerItem icon={Cloud} label="跨设备同步" subtitle="同步码导入导出" onClick={onSync} />
+      <DrawerItem icon={Download} label="导入 / 导出" subtitle="JSON 备份恢复" onClick={onImportExport} />
+    </div>
+  )
+}
+
+function DrawerItem({
+  icon: Icon, label, subtitle, onClick,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  subtitle?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 p-3 rounded-lg touch-feedback hover:bg-muted/50 text-left"
+    >
+      <div className="w-9 h-9 rounded-lg bg-violet-50 dark:bg-violet-950/30 flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{label}</div>
+        {subtitle && <div className="text-[11px] text-muted-foreground">{subtitle}</div>}
+      </div>
+      <ChevronRight className="w-4 h-4 text-muted-foreground" />
+    </button>
+  )
+}
