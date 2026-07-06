@@ -38,7 +38,12 @@ import { ThemeSwitcher } from '@/components/theme-switcher'
 import { AuthDialog } from '@/components/auth-dialog'
 import { AISearchDialog } from '@/components/ai-search-dialog'
 import { getColorClass, copyToClipboard, type Prompt } from '@/lib/prompt-types'
-import { getAIConfig, setAIConfig, isAIConfigured, type AIConfig } from '@/lib/client/ai'
+import {
+  getAIConfig, setAIConfig, isAIConfigured, type AIConfig,
+  getAllChannels, getActiveChannelId, setActiveChannelId, getActiveChannel,
+  addOrUpdateChannel, deleteChannel, createChannelFromPreset,
+  AI_CHANNEL_PRESETS, type ChannelConfig,
+} from '@/lib/client/ai'
 import { checkForUpdate, APP_VERSION, GITHUB_REPO, type UpdateInfo } from '@/lib/client/updater'
 import { fetchHotPrompts, autoFetchHotIfNeeded, removeAllVariablesFromExisting, type FetchProgress } from '@/lib/client/hot-prompts'
 import { getCurrentUser, isLoggedIn, maskEmail } from '@/lib/client/auth'
@@ -848,7 +853,31 @@ function HomeTab({
     { value: 'rating', label: '评分最高', icon: Star },
   ]
 
+  // 分页
+  const [pageSize, setPageSize] = React.useState(() => {
+    if (typeof localStorage === 'undefined') return 50
+    return parseInt(localStorage.getItem('prompthub_page_size') || '50', 10)
+  })
+  const [currentPage, setCurrentPage] = React.useState(1)
+
   const currentTitle = activeCategoryName || activeCollectionName || (activeTag ? `#${activeTag}` : '全部提示词')
+
+  // 分页计算
+  const totalPages = Math.ceil(prompts.length / pageSize)
+  const pagedPrompts = prompts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  // 切换筛选条件时重置到第一页
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, sortBy, showFavoritesOnly, activeCategoryId, activeCollectionId, activeTag])
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size)
+    setCurrentPage(1)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('prompthub_page_size', String(size))
+    }
+  }
 
   if (selectionMode) {
     return (
@@ -889,6 +918,8 @@ function HomeTab({
       </div>
     )
   }
+
+  // 非选择模式：分页显示
 
   return (
     <div className="px-4 py-3 lg:px-0 lg:py-0">
@@ -932,7 +963,7 @@ function HomeTab({
       )}
 
       <PromptGrid
-        prompts={prompts}
+        prompts={pagedPrompts}
         loading={loading}
         error={error}
         selectionMode={false}
@@ -944,6 +975,55 @@ function HomeTab({
         onShare={onShare}
         categories={categories || []}
       />
+
+      {/* 分页控制 */}
+      {prompts.length > pageSize && (
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
+          {/* 每页条数选择 */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">每页</span>
+            {[50, 100, 200].map(size => (
+              <button
+                key={size}
+                onClick={() => handlePageSizeChange(size)}
+                className={cn(
+                  'px-2 py-0.5 rounded-md text-[11px] font-mono touch-feedback',
+                  pageSize === size
+                    ? 'bg-violet-500 text-white'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                )}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
+
+          {/* 页码 */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage <= 1}
+              className="px-2 py-0.5 rounded-md text-xs bg-muted disabled:opacity-30 touch-feedback"
+            >
+              上一页
+            </button>
+            <span className="text-xs text-muted-foreground px-2">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="px-2 py-0.5 rounded-md text-xs bg-muted disabled:opacity-30 touch-feedback"
+            >
+              下一页
+            </button>
+          </div>
+
+          <span className="text-[10px] text-muted-foreground">
+            共 {prompts.length} 条
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1742,297 +1822,288 @@ function SettingsRow({
 // AI 配置区
 // ============================================
 // ============================================
-// 预设 AI 模型列表
+// AI 配置区（多渠道管理）
 // ============================================
-const AI_PRESETS: Array<{
-  id: string
-  name: string
-  baseUrl: string
-  models: string[]
-  defaultModel: string
-  description: string
-  emoji: string
-  website?: string
-}> = [
-  {
-    id: 'zai',
-    name: 'Z.ai 智谱',
-    baseUrl: 'https://api.z.ai/api/paas/v4',
-    models: ['glm-4.6', 'glm-4-plus', 'glm-4-flash', 'glm-4-air'],
-    defaultModel: 'glm-4.6',
-    description: '国产大模型，免费额度多，中文表现优秀',
-    emoji: '🤖',
-    website: 'https://z.ai',
-  },
-  {
-    id: 'agnes',
-    name: 'Agnes AI',
-    baseUrl: 'https://apihub.agnes-ai.com/v1',
-    models: ['agnes-2.0-flash'],
-    defaultModel: 'agnes-2.0-flash',
-    description: 'Agnes AI 模型，快速响应',
-    emoji: '✨',
-    website: 'https://agnes-ai.com',
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1-mini', 'o1-preview'],
-    defaultModel: 'gpt-4o-mini',
-    description: 'GPT 系列，效果最好但需海外网络',
-    emoji: '🟢',
-    website: 'https://platform.openai.com',
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    baseUrl: 'https://api.deepseek.com/v1',
-    models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner'],
-    defaultModel: 'deepseek-chat',
-    description: '国产，性价比高，代码能力强',
-    emoji: '🔵',
-    website: 'https://platform.deepseek.com',
-  },
-  {
-    id: 'moonshot',
-    name: 'Moonshot Kimi',
-    baseUrl: 'https://api.moonshot.cn/v1',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
-    defaultModel: 'moonshot-v1-8k',
-    description: 'Kimi，长上下文，中文友好',
-    emoji: '🌙',
-    website: 'https://platform.moonshot.cn',
-  },
-  {
-    id: 'qwen',
-    name: '通义千问',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
-    defaultModel: 'qwen-turbo',
-    description: '阿里通义千问，国产大模型',
-    emoji: '🟠',
-    website: 'https://dashscope.console.aliyun.com',
-  },
-  {
-    id: 'claude',
-    name: 'Anthropic Claude',
-    baseUrl: 'https://api.anthropic.com/v1',
-    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
-    defaultModel: 'claude-3-5-sonnet-20241022',
-    description: 'Claude，长文写作擅长',
-    emoji: '🟣',
-    website: 'https://console.anthropic.com',
-  },
-  {
-    id: 'custom',
-    name: '自定义',
-    baseUrl: '',
-    models: [],
-    defaultModel: '',
-    description: '兼容 OpenAI 协议的任意端点',
-    emoji: '⚙️',
-  },
-]
-
 function AIConfigSection() {
-  const [config, setConfig] = React.useState<AIConfig>(getAIConfig())
   const [open, setOpen] = React.useState(false)
-  const [selectedPreset, setSelectedPreset] = React.useState<string>('')
+  const [channels, setChannels] = React.useState<ChannelConfig[]>([])
+  const [activeChannelId, setActiveChannelId] = React.useState<string | null>(null)
+  const [editingChannel, setEditingChannel] = React.useState<ChannelConfig | null>(null)
+  const { toast } = useToast()
 
-  // 根据当前 config 推断已选预设
   React.useEffect(() => {
     if (open) {
-      const preset = AI_PRESETS.find(p =>
-        p.id !== 'custom' && p.baseUrl === config.baseUrl
-      )
-      setSelectedPreset(preset?.id || 'custom')
+      setChannels(getAllChannels())
+      setActiveChannelId(getActiveChannelId())
     }
-  }, [open, config.baseUrl])
+  }, [open])
 
-  // 切换预设时自动填入 baseUrl 和默认 model
-  const handlePresetSelect = (presetId: string) => {
-    setSelectedPreset(presetId)
-    const preset = AI_PRESETS.find(p => p.id === presetId)
-    if (!preset) return
-    setConfig(c => ({
-      ...c,
-      baseUrl: preset.baseUrl,
-      model: preset.defaultModel,
-    }))
+  const activeChannel = channels.find(c => c.id === activeChannelId)
+  const activeConfig = getAIConfig()
+
+  const handleSwitchChannel = (id: string) => {
+    setActiveChannelId(id)
+    setActiveChannelIdStore(id)
+    const ch = channels.find(c => c.id === id)
+    if (ch) {
+      setAIConfig({
+        apiKey: ch.apiKey,
+        baseUrl: ch.baseUrl,
+        model: ch.model,
+        apiFormat: ch.apiFormat,
+      })
+    }
+    toast({ title: `已切换到 ${ch?.name}`, description: ch?.model })
   }
+
+  const handleAddChannel = (presetId: string) => {
+    const newCh = createChannelFromPreset(presetId)
+    addOrUpdateChannel(newCh)
+    setChannels(getAllChannels())
+    setEditingChannel(newCh)
+    setActiveChannelIdStore(newCh.id)
+    setActiveChannelId(newCh.id)
+  }
+
+  const handleSaveChannel = (ch: ChannelConfig) => {
+    addOrUpdateChannel(ch)
+    setChannels(getAllChannels())
+    setEditingChannel(null)
+    // 如果是活跃渠道，更新配置
+    if (ch.id === activeChannelId) {
+      setAIConfig({
+        apiKey: ch.apiKey,
+        baseUrl: ch.baseUrl,
+        model: ch.model,
+        apiFormat: ch.apiFormat,
+      })
+    }
+    toast({ title: '渠道配置已保存' })
+  }
+
+  const handleDeleteChannel = (id: string) => {
+    if (!confirm('确定删除这个渠道配置？')) return
+    deleteChannel(id)
+    setChannels(getAllChannels())
+    setActiveChannelId(getActiveChannelId())
+    toast({ title: '渠道已删除' })
+  }
+
+  // 别名避免和 React state setter 冲突
+  const setActiveChannelIdStore = setActiveChannelId as (id: string) => void
 
   return (
     <SettingsSection title="AI 配置">
       <SettingsRow
         icon={Wand2}
         title="AI API 配置"
-        subtitle={config.apiKey ? `已配置 · ${config.model}` : '未配置（AI 功能不可用）'}
+        subtitle={activeConfig.apiKey ? `已配置 · ${activeConfig.model}` : '未配置（AI 功能不可用）'}
         onClick={() => setOpen(true)}
       />
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-[95vw] sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Wand2 className="w-4 h-4 text-violet-500" />
               AI API 配置
             </DialogTitle>
             <DialogDescription>
-              选择预设模型快速配置，或自定义兼容 OpenAI 协议的端点
+              多渠道管理，每个渠道独立保存 API Key / Base URL / 模型 / API 格式。切换渠道自动切换配置。
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* 预设模型选择 */}
+            {/* 已有渠道列表 */}
+            {channels.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">已配置渠道（点击切换）</label>
+                {channels.map(ch => {
+                  const preset = AI_CHANNEL_PRESETS.find(p => p.name === ch.name)
+                  return (
+                    <div
+                      key={ch.id}
+                      className={cn(
+                        'flex items-center gap-2 p-2.5 rounded-lg border-2 cursor-pointer touch-feedback',
+                        ch.id === activeChannelId
+                          ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/30'
+                          : 'border-border hover:border-violet-300',
+                      )}
+                      onClick={() => handleSwitchChannel(ch.id)}
+                    >
+                      <span className="text-lg">{preset?.emoji || '⚙️'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold flex items-center gap-1">
+                          {ch.name}
+                          {ch.id === activeChannelId && (
+                            <span className="text-[9px] bg-violet-500 text-white px-1 rounded">当前</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground truncate font-mono">
+                          {ch.model} · {ch.apiFormat} · {ch.apiKey ? '✅ Key已填' : '❌ 未填Key'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingChannel(ch) }}
+                        className="p-1 rounded hover:bg-muted"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteChannel(ch.id) }}
+                        className="p-1 rounded hover:bg-muted text-destructive"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* 添加新渠道 */}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                选择 AI 模型提供商
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                {AI_PRESETS.map(preset => (
+              <label className="text-xs font-medium text-muted-foreground mb-2 block">添加新渠道</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {AI_CHANNEL_PRESETS.map(preset => (
                   <button
                     key={preset.id}
-                    onClick={() => handlePresetSelect(preset.id)}
-                    className={cn(
-                      'flex items-start gap-2 p-2.5 rounded-lg border-2 touch-feedback text-left transition-all',
-                      selectedPreset === preset.id
-                        ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/30'
-                        : 'border-border hover:border-violet-300',
-                    )}
+                    onClick={() => handleAddChannel(preset.id)}
+                    className="flex items-center gap-1.5 p-2 rounded-lg border border-border hover:border-violet-300 touch-feedback text-left"
                   >
-                    <span className="text-lg leading-none mt-0.5">{preset.emoji}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold truncate">{preset.name}</div>
-                      <div className="text-[10px] text-muted-foreground line-clamp-2 leading-tight mt-0.5">
-                        {preset.description}
-                      </div>
-                    </div>
+                    <span className="text-base">{preset.emoji}</span>
+                    <span className="text-xs font-medium truncate">{preset.name}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* 当前预设详情 */}
-            {selectedPreset && selectedPreset !== 'custom' && (
-              <div className="rounded-lg bg-muted/40 border border-border p-2.5 text-[11px]">
-                {(() => {
-                  const preset = AI_PRESETS.find(p => p.id === selectedPreset)!
-                  return (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-base">{preset.emoji}</span>
-                        <span className="font-bold text-foreground">{preset.name}</span>
-                        {preset.website && (
-                          <a
-                            href={preset.website}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-violet-500 ml-auto text-[10px] hover:underline"
-                          >
-                            申请 Key ↗
-                          </a>
-                        )}
-                      </div>
-                      <div className="text-muted-foreground">{preset.description}</div>
-                    </div>
-                  )
-                })()}
-              </div>
-            )}
+            {/* 编辑渠道 */}
+            {editingChannel && (
+              <div className="rounded-lg border-2 border-violet-300 p-3 space-y-3 bg-violet-50/30 dark:bg-violet-950/10">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold">编辑渠道：{editingChannel.name}</span>
+                  <button onClick={() => setEditingChannel(null)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
 
-            {/* API Key */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">API Key</label>
-              <Input
-                type="password"
-                value={config.apiKey}
-                onChange={e => setConfig(c => ({ ...c, apiKey: e.target.value }))}
-                placeholder="sk-..."
-                className="mt-1"
-              />
-            </div>
-
-            {/* Base URL */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">
-                Base URL
-                {selectedPreset !== 'custom' && (
-                  <span className="ml-1 text-[10px] text-violet-500">（来自预设，可修改）</span>
-                )}
-              </label>
-              <Input
-                value={config.baseUrl}
-                onChange={e => setConfig(c => ({ ...c, baseUrl: e.target.value }))}
-                placeholder="https://api.z.ai/api/paas/v4"
-                className="mt-1 font-mono text-xs"
-              />
-            </div>
-
-            {/* 模型选择 */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">
-                模型
-                {selectedPreset !== 'custom' && (
-                  <span className="ml-1 text-[10px] text-violet-500">（点选或手动输入）</span>
-                )}
-              </label>
-              {selectedPreset !== 'custom' && AI_PRESETS.find(p => p.id === selectedPreset)?.models.length ? (
-                <>
-                  <div className="flex flex-wrap gap-1.5 mt-1.5 mb-1.5">
-                    {AI_PRESETS.find(p => p.id === selectedPreset)!.models.map(m => (
-                      <button
-                        key={m}
-                        onClick={() => setConfig(c => ({ ...c, model: m }))}
-                        className={cn(
-                          'px-2 py-1 rounded-md text-[11px] font-mono touch-feedback transition-colors',
-                          config.model === m
-                            ? 'bg-violet-500 text-white'
-                            : 'bg-muted text-muted-foreground hover:bg-muted/70',
-                        )}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">渠道名称</label>
                   <Input
-                    value={config.model}
-                    onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
+                    value={editingChannel.name}
+                    onChange={e => setEditingChannel({ ...editingChannel, name: e.target.value })}
+                    className="mt-1 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">API Key</label>
+                  <Input
+                    type="password"
+                    value={editingChannel.apiKey}
+                    onChange={e => setEditingChannel({ ...editingChannel, apiKey: e.target.value })}
+                    placeholder="sk-..."
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Base URL</label>
+                  <Input
+                    value={editingChannel.baseUrl}
+                    onChange={e => setEditingChannel({ ...editingChannel, baseUrl: e.target.value })}
+                    placeholder="https://api.z.ai/api/paas/v4"
+                    className="mt-1 font-mono text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">模型</label>
+                  {/* 预设模型快捷选择 */}
+                  {(() => {
+                    const preset = AI_CHANNEL_PRESETS.find(p =>
+                      editingChannel.baseUrl.includes(p.baseUrl.split('//')[1]?.split('/')[0] || '')
+                    )
+                    if (preset && preset.models.length > 0) {
+                      return (
+                        <>
+                          <div className="flex flex-wrap gap-1.5 mt-1.5 mb-1.5">
+                            {preset.models.map(m => (
+                              <button
+                                key={m}
+                                onClick={() => setEditingChannel({ ...editingChannel, model: m })}
+                                className={cn(
+                                  'px-2 py-1 rounded-md text-[11px] font-mono touch-feedback',
+                                  editingChannel.model === m
+                                    ? 'bg-violet-500 text-white'
+                                    : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                                )}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )
+                    }
+                    return null
+                  })()}
+                  <Input
+                    value={editingChannel.model}
+                    onChange={e => setEditingChannel({ ...editingChannel, model: e.target.value })}
                     placeholder="模型名"
                     className="font-mono text-xs"
                   />
-                </>
-              ) : (
-                <Input
-                  value={config.model}
-                  onChange={e => setConfig(c => ({ ...c, model: e.target.value }))}
-                  placeholder="模型名"
-                  className="mt-1 font-mono text-xs"
-                />
-              )}
-            </div>
+                </div>
 
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">API 格式</label>
+                  <div className="flex gap-2 mt-1.5">
+                    {([
+                      { value: 'openai', label: 'OpenAI 兼容', desc: '大多数平台' },
+                      { value: 'anthropic', label: 'Anthropic', desc: 'Claude' },
+                      { value: 'custom', label: '自定义', desc: '手动配置' },
+                    ] as const).map(fmt => (
+                      <button
+                        key={fmt.value}
+                        onClick={() => setEditingChannel({ ...editingChannel, apiFormat: fmt.value })}
+                        className={cn(
+                          'flex-1 p-2 rounded-lg border-2 text-center touch-feedback',
+                          editingChannel.apiFormat === fmt.value
+                            ? 'border-violet-500 bg-violet-50 dark:bg-violet-950/30'
+                            : 'border-border',
+                        )}
+                      >
+                        <div className="text-xs font-bold">{fmt.label}</div>
+                        <div className="text-[9px] text-muted-foreground">{fmt.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <Button
+                  onClick={() => handleSaveChannel(editingChannel)}
+                  className="w-full bg-violet-500 hover:bg-violet-600"
+                >
+                  保存渠道配置
+                </Button>
+              </div>
+            )}
+
+            {/* 使用提示 */}
             <div className="text-[11px] text-muted-foreground bg-muted/50 p-2.5 rounded-md leading-relaxed">
               <div className="font-medium text-foreground mb-1">💡 使用提示</div>
               <ul className="space-y-0.5 list-disc list-inside">
-                <li>选择上方预设可一键填入 Base URL 和推荐模型</li>
-                <li>所有兼容 OpenAI 协议的端点都可使用</li>
+                <li>每个渠道独立保存 API Key / Base URL / 模型 / API 格式</li>
+                <li>点击渠道卡片可快速切换，配置自动跟随</li>
+                <li>API 格式：OpenAI 兼容（大多数）/ Anthropic（Claude）/ 自定义</li>
                 <li>API Key 仅保存在本地，不会上传</li>
-                <li>不同模型计费不同，请参考各平台定价</li>
               </ul>
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpen(false)}>取消</Button>
-            <Button
-              onClick={() => {
-                setAIConfig(config)
-                setOpen(false)
-              }}
-              className="bg-violet-500 hover:bg-violet-600"
-            >
-              保存配置
-            </Button>
+            <Button onClick={() => setOpen(false)}>完成</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

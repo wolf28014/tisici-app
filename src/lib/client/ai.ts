@@ -1,19 +1,151 @@
-// 客户端 AI 调用：用户在设置中填入 ZAI API Key，直接 HTTP 调用
+// 客户端 AI 调用：用户在设置中填入 API Key，直接 HTTP 调用
 // 兼容 OpenAI Chat Completions 格式
+// 支持多渠道配置：每个渠道独立保存 apiKey/baseUrl/model/apiFormat
 
 import type { Background } from './db'
 
+export type APIFormat = 'openai' | 'anthropic' | 'custom'
+
 export type AIConfig = {
   apiKey: string
-  baseUrl: string // 默认 https://api.z.ai/api/paas/v4
-  model: string // 默认 glm-4.6
+  baseUrl: string
+  model: string
+  apiFormat?: APIFormat // API 协议格式
+}
+
+// 多渠道配置：每个渠道独立保存
+export type ChannelConfig = {
+  id: string
+  name: string
+  apiKey: string
+  baseUrl: string
+  model: string
+  apiFormat: APIFormat
 }
 
 const AI_CONFIG_KEY = 'prompthub_ai_config'
+const AI_CHANNELS_KEY = 'prompthub_ai_channels'
+const AI_ACTIVE_CHANNEL_KEY = 'prompthub_ai_active_channel'
+
+// 预设渠道
+export const AI_CHANNEL_PRESETS: Array<{
+  id: string
+  name: string
+  baseUrl: string
+  models: string[]
+  defaultModel: string
+  apiFormat: APIFormat
+  description: string
+  emoji: string
+  website?: string
+}> = [
+  {
+    id: 'zai',
+    name: 'Z.ai 智谱',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    models: ['glm-4.6', 'glm-4-plus', 'glm-4-flash', 'glm-4-air'],
+    defaultModel: 'glm-4.6',
+    apiFormat: 'openai',
+    description: '国产大模型，免费额度多，中文优秀',
+    emoji: '🤖',
+    website: 'https://z.ai',
+  },
+  {
+    id: 'agnes',
+    name: 'Agnes AI',
+    baseUrl: 'https://apihub.agnes-ai.com/v1',
+    models: ['agnes-2.0-flash'],
+    defaultModel: 'agnes-2.0-flash',
+    apiFormat: 'openai',
+    description: 'Agnes AI 模型，快速响应',
+    emoji: '✨',
+    website: 'https://agnes-ai.com',
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1-mini', 'o1-preview'],
+    defaultModel: 'gpt-4o-mini',
+    apiFormat: 'openai',
+    description: 'GPT 系列，效果最好但需海外网络',
+    emoji: '🟢',
+    website: 'https://platform.openai.com',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner'],
+    defaultModel: 'deepseek-chat',
+    apiFormat: 'openai',
+    description: '国产，性价比高，代码能力强',
+    emoji: '🔵',
+    website: 'https://platform.deepseek.com',
+  },
+  {
+    id: 'moonshot',
+    name: 'Moonshot Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    defaultModel: 'moonshot-v1-8k',
+    apiFormat: 'openai',
+    description: 'Kimi，长上下文，中文友好',
+    emoji: '🌙',
+    website: 'https://platform.moonshot.cn',
+  },
+  {
+    id: 'qwen',
+    name: '通义千问',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
+    defaultModel: 'qwen-turbo',
+    apiFormat: 'openai',
+    description: '阿里通义千问，国产大模型',
+    emoji: '🟠',
+    website: 'https://dashscope.console.aliyun.com',
+  },
+  {
+    id: 'claude',
+    name: 'Anthropic Claude',
+    baseUrl: 'https://api.anthropic.com/v1',
+    models: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229', 'claude-3-haiku-20240307'],
+    defaultModel: 'claude-3-5-sonnet-20241022',
+    apiFormat: 'anthropic',
+    description: 'Claude，长文写作擅长',
+    emoji: '🟣',
+    website: 'https://console.anthropic.com',
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    baseUrl: '',
+    models: [],
+    defaultModel: '',
+    apiFormat: 'openai',
+    description: '兼容 OpenAI 协议的任意端点',
+    emoji: '⚙️',
+  },
+]
+
+// ============================================
+// 当前活跃配置（兼容旧代码）
+// ============================================
 
 export function getAIConfig(): AIConfig {
+  // 优先从活跃渠道读取
+  const activeChannel = getActiveChannel()
+  if (activeChannel) {
+    return {
+      apiKey: activeChannel.apiKey,
+      baseUrl: activeChannel.baseUrl,
+      model: activeChannel.model,
+      apiFormat: activeChannel.apiFormat,
+    }
+  }
+  // 兼容旧版单配置
   if (typeof localStorage === 'undefined') {
-    return { apiKey: '', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.6' }
+    return { apiKey: '', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.6', apiFormat: 'openai' }
   }
   try {
     const raw = localStorage.getItem(AI_CONFIG_KEY)
@@ -23,13 +155,25 @@ export function getAIConfig(): AIConfig {
         apiKey: parsed.apiKey || '',
         baseUrl: parsed.baseUrl || 'https://api.z.ai/api/paas/v4',
         model: parsed.model || 'glm-4.6',
+        apiFormat: parsed.apiFormat || 'openai',
       }
     }
   } catch {}
-  return { apiKey: '', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.6' }
+  return { apiKey: '', baseUrl: 'https://api.z.ai/api/paas/v4', model: 'glm-4.6', apiFormat: 'openai' }
 }
 
 export function setAIConfig(cfg: Partial<AIConfig>): AIConfig {
+  // 同时更新活跃渠道
+  const activeChannel = getActiveChannel()
+  if (activeChannel) {
+    updateChannel(activeChannel.id, {
+      apiKey: cfg.apiKey ?? activeChannel.apiKey,
+      baseUrl: cfg.baseUrl ?? activeChannel.baseUrl,
+      model: cfg.model ?? activeChannel.model,
+      apiFormat: cfg.apiFormat ?? activeChannel.apiFormat,
+    })
+  }
+  // 兼容旧版
   const cur = getAIConfig()
   const next = { ...cur, ...cfg }
   if (typeof localStorage !== 'undefined') {
@@ -40,6 +184,88 @@ export function setAIConfig(cfg: Partial<AIConfig>): AIConfig {
 
 export function isAIConfigured(): boolean {
   return !!getAIConfig().apiKey
+}
+
+// ============================================
+// 多渠道管理
+// ============================================
+
+export function getAllChannels(): ChannelConfig[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(AI_CHANNELS_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+function saveAllChannels(channels: ChannelConfig[]) {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(AI_CHANNELS_KEY, JSON.stringify(channels))
+}
+
+export function getActiveChannelId(): string | null {
+  if (typeof localStorage === 'undefined') return null
+  return localStorage.getItem(AI_ACTIVE_CHANNEL_KEY)
+}
+
+export function setActiveChannelId(id: string): void {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(AI_ACTIVE_CHANNEL_KEY, id)
+}
+
+export function getActiveChannel(): ChannelConfig | null {
+  const id = getActiveChannelId()
+  if (!id) return null
+  const channels = getAllChannels()
+  return channels.find(c => c.id === id) || null
+}
+
+export function addOrUpdateChannel(channel: ChannelConfig): void {
+  const channels = getAllChannels()
+  const idx = channels.findIndex(c => c.id === channel.id)
+  if (idx >= 0) {
+    channels[idx] = channel
+  } else {
+    channels.push(channel)
+  }
+  saveAllChannels(channels)
+}
+
+export function updateChannel(id: string, updates: Partial<ChannelConfig>): void {
+  const channels = getAllChannels()
+  const idx = channels.findIndex(c => c.id === id)
+  if (idx >= 0) {
+    channels[idx] = { ...channels[idx], ...updates }
+    saveAllChannels(channels)
+  }
+}
+
+export function deleteChannel(id: string): void {
+  const channels = getAllChannels().filter(c => c.id !== id)
+  saveAllChannels(channels)
+  // 如果删的是活跃渠道，切到第一个
+  if (getActiveChannelId() === id) {
+    if (channels.length > 0) {
+      setActiveChannelId(channels[0].id)
+    } else {
+      localStorage.removeItem(AI_ACTIVE_CHANNEL_KEY)
+    }
+  }
+}
+
+// 从预设创建渠道
+export function createChannelFromPreset(presetId: string): ChannelConfig {
+  const preset = AI_CHANNEL_PRESETS.find(p => p.id === presetId) || AI_CHANNEL_PRESETS[0]
+  return {
+    id: presetId + '_' + Date.now(),
+    name: preset.name,
+    apiKey: '',
+    baseUrl: preset.baseUrl,
+    model: preset.defaultModel,
+    apiFormat: preset.apiFormat,
+  }
 }
 
 // ============================================
@@ -54,33 +280,77 @@ async function callAI(
     throw new Error('尚未配置 AI API Key，请到「设置」中填写')
   }
 
-  const url = `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
-  const body: Record<string, unknown> = {
-    model: cfg.model,
-    messages,
-    temperature: options?.temperature ?? 0.7,
-    max_tokens: options?.maxTokens ?? 4096,
+  const format = cfg.apiFormat || 'openai'
+  const tryCall = async (useJsonMode: boolean): Promise<string> => {
+    if (format === 'anthropic') {
+      // Anthropic Claude API 格式
+      const url = `${cfg.baseUrl.replace(/\/$/, '')}/messages`
+      // system message 单独传
+      const systemMsg = messages.find(m => m.role === 'system')?.content || ''
+      const userMessages = messages.filter(m => m.role !== 'system')
+      const body: Record<string, unknown> = {
+        model: cfg.model,
+        max_tokens: options?.maxTokens ?? 4096,
+        system: systemMsg,
+        messages: userMessages.map(m => ({ role: m.role, content: m.content })),
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': cfg.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(`AI 调用失败 (${res.status}): ${errText.slice(0, 200)}`)
+      }
+      const data = await res.json()
+      return data?.content?.[0]?.text || ''
+    }
+
+    // OpenAI 兼容格式（默认）
+    const url = `${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`
+    const body: Record<string, unknown> = {
+      model: cfg.model,
+      messages,
+      temperature: options?.temperature ?? 0.7,
+      max_tokens: options?.maxTokens ?? 4096,
+    }
+    if (useJsonMode && options?.jsonMode) {
+      body.response_format = { type: 'json_object' }
+    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(`AI 调用失败 (${res.status}): ${errText.slice(0, 200)}`)
+    }
+    const data = await res.json()
+    return data?.choices?.[0]?.message?.content || ''
   }
+
+  // jsonMode 容错
   if (options?.jsonMode) {
-    body.response_format = { type: 'json_object' }
+    try {
+      return await tryCall(true)
+    } catch (e) {
+      const errMsg = (e as Error).message
+      if (errMsg.includes('400') || errMsg.includes('422') || errMsg.includes('response_format')) {
+        return await tryCall(false)
+      }
+      throw e
+    }
   }
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
-    },
-    body: JSON.stringify(body),
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`AI 调用失败 (${res.status}): ${errText.slice(0, 200)}`)
-  }
-
-  const data = await res.json()
-  return data?.choices?.[0]?.message?.content || ''
+  return await tryCall(false)
 }
 
 // ============================================
